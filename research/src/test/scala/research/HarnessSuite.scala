@@ -42,6 +42,11 @@ class HarnessSuite extends munit.FunSuite {
     assertEquals(Slisenko.check(10), None)
   }
 
+  test("a layered pointer machine compiles to a PEG that agrees with it and with the oracle") {
+    assertEquals(Lpm.check(LpmMarked.machine, 1, 6, LpmMarked.oracle), None)
+    assertEquals(Lpm.check(LpmMarked.machine, 2, 5, LpmMarked.oracle), None)
+  }
+
   test("the real-time head machine certifies every initial palindrome on time at a bounded speed") {
     val it = Exhaust.words(11)
     var worst = 0

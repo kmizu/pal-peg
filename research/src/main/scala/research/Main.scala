@@ -44,6 +44,15 @@ object Main {
       println(SlisenkoRT.run(w, speed, verbose = rest.contains("v")).getOrElse(s"ok at speed $speed; min speed = ${SlisenkoRT.minSpeed(w)}"))
     case "slisenko-stress" :: rest =>
       SlisenkoRT.stress(rest.headOption.map(_.toInt).getOrElse(2000), rest.drop(1).headOption.map(_.toInt).getOrElse(3))
+    case "lpm-marked" :: rest =>
+      val maxLen = rest.headOption.map(_.toInt).getOrElse(7)
+      val budget = rest.drop(1).headOption.map(_.toInt).getOrElse(1)
+      val m = LpmMarked.machine
+      val g = Lpm.compile(m, budget)
+      val (rules, symbols) = g.size
+      println(s"lpm marked: budget $budget, PEG rules=$rules symbols=$symbols")
+      println(Lpm.check(m, budget, maxLen, LpmMarked.oracle).getOrElse(s"ok: interpreter and PEG agree with the oracle on all words of length <= $maxLen"))
+      if (rest.contains("print")) { println(g.render) }
     case "slisenko-profile" :: w :: _ =>
       SlisenkoRT.profile(w)
     case "slisenko-trace" :: w :: _ =>
