@@ -6,11 +6,14 @@ construction, DESIGN.md in the author's notes). It says what was built, what was
 grammar is still about 5× above the target, and which questions are open. The numbers in
 [`NOTES.md`](NOTES.md) §4–§5 are the primary record; this note is the map.
 
-**Status in one line.** A plain PEG for the binary palindromes with **33,019 rules** (3.98M
-symbols), generated from a pointer machine of 70 slots per letter, correct on all words of length
-≤ 10, on 600 random words up to 513 letters, and accepted by the plain PEG runner
-(`out/pal2-m12-f40.peg.gz`). The generator of the proof produces 3.1M rules for the same
-construction, so this is a 100× reduction; the target ("a few thousand rules") needs another 5×.
+**Status in one line (2026-09-25).** A plain PEG for the binary palindromes with **25,510 rules**
+(2.36M right-hand-side nodes, 12.4 MB), generated from a pointer machine of 66 slots per letter
+(`LpsPal3`, flags truncated to the needed interval, 12 matcher + 36 flags steps), compacted by
+`PegOptimize`, correct on all words ≤ 10, on random words up to 513 letters, deadline-checked on
+structured words, and accepted by the plain PEG runner on raw inputs up to 600 letters
+(`out/pal3-m12-f36.peg.gz`). Before the compression plan it was 33,019 rules (`LpsPal2`); the
+generator of the proof produces 3.1M rules for the same construction. The target ("a few thousand
+rules") needs another 5×; [`NOTES.md`](NOTES.md) §6 has the per-step measurements and the next cost item.
 
 ## 1. The pipeline
 
@@ -165,6 +168,8 @@ Roughly: `rules ≈ Σ_copies (nodes of the step + pointers × log₂ copies)`.
 | `Lps.scala` | slot-scheduled machines and their compiler to PEG (site bits, aliasing, `checkSim`, `fused`) |
 | `LpsKmp2.scala` | the window-KMP matcher as a universal step, standalone (`pattern # text`) |
 | `LpsPal2.scala` | PAL: the controller of `LpsPal.scala`, matchers and the shared flags worker on universal steps |
+| `LpsPal3.scala` | `LpsPal2` with the flags job truncated to the needed interval (no skip, no chain below `lo`) — the current best |
+| `PegOptimize.scala`, `PegMetrics.scala`, `LpsProfile.scala` | grammar compaction, size metrics, job/deadline profiling |
 | `LpsKmp.scala`, `LpsPal.scala` | the earlier one-slot-per-micro-step versions (kept for the measurements) |
 | `LpmSlisenko.scala`, `SlisenkoRT.scala` | the Slisenko 1977 route, abandoned at ≈ 5,000 rules per layer × ≥ 300 layers |
 | `NOTES.md` | the measurements and their interpretation, in order |

@@ -143,3 +143,44 @@ What would move the number further:
   than log₂(copies) bit rules per pointer — the dominant term now;
 - a flags job that reuses work across the four jobs of a stage (the table of y_r is a prefix of
   the table of y_{r+1}; only the matching against y^R restarts), which would cut the rate itself.
+
+## 6. The compression plan (2026-09-25)
+
+Executed from the plan `pal-peg-compression-claude-code-aecb05e-2026-09-24.md` (Tasks 0–5; Task 6 not
+run, see below). Every row is measured (`out/metrics/*.json`); "compact" is after `PegOptimize`.
+
+| step | grammar | N | rhs nodes | max rhs | bytes |
+|---|---|---|---|---|---|
+| before (aecb05e) | PAL2 12/40 | 33,019 | 3,976,769 | — | — |
+| Task 0: semantics (exclusive Ite masks, no phantom tick on ε) | PAL2 12/40 raw | 33,019 | 4,098,717 | 1,222 | 25.5M |
+| Task 1: reachability, identities, aliases, identical rhs | PAL2 12/40 compact | 29,408 | 4,056,061 | 1,222 | 25.2M |
+| (Task 1, single-use inlining — not adopted) | PAL2 12/40 | 20,958 | 4,045,899 | 7,964 | 24.9M |
+| Task 2: static letter/separator kinds, same-slot fields | PAL2 12/40 compact | 28,701 | 3,944,094 | 1,222 | 24.5M |
+| Task 3: flags truncated to the needed interval (PAL3) | PAL3 12/40 compact | 27,550 | 3,614,066 | 1,222 | 22.3M |
+| Task 3/4: the rate the truncation buys (deadline-checked) | PAL3 12/36 compact | 25,510 | 3,039,750 | 1,102 | 18.7M |
+| Task 5: decision tries for site dispatch | **PAL3 12/36 compact** | **25,510** | **2,361,254** | **894** | **12.4M** |
+
+Correctness of the final grammar: `LpsCompilerSuite`, `PegOptimizeSuite` (extents of every mapped rule),
+`FlagIntervalSuite` (the truncated iterator against the oracle, |y| ≤ 12; the plan's Python model up to
+15), `LpsDeadlineSuite` (no deadline violation, no overwritten request, matcher reports on time, on the
+122 structured words ≤ 129); interpreter vs oracle on all words ≤ 10 and 100 random words ≤ 513; PEG vs
+interpreter on all words ≤ 6 (1/1); PEG vs oracle on all words ≤ 5 at 12/36; the printed grammar
+re-parsed and checked on all words ≤ 9; the Rust runner on raw inputs up to 600 letters.
+
+Rates: matchers 12 (8 failed on a 64-letter word), flags 36 (34: deadline violations on structured words
+and a failing random word; 32: a 113-letter word; 28: a 60-letter word; 24: |w| = 7).
+
+Two compiler bugs surfaced by the plan's review items, both invisible to the exhaustive machine tests:
+a selected null fell through to the next alternative of a flattened conditional (fixed with exclusive
+masks), and the input kind of a field read through a cell was dropped (a letter compared as "never a
+letter"; caught by the PEG-vs-oracle check at the working rate, which the 1/1 check does not exercise).
+
+Where the 25,510 rules are (compact PAL3 12/36): site-bit rules ≈ 13,000, conditions ≈ 7,000,
+dereferences ≈ 1,600, fields ≈ 600, registers/bits ≈ 2,000. The flags step is ≈ 500 rules × 36 copies.
+
+Task 6 was not run. From the measured job profile (r = 3, S = 4: forward view 20, table 56, archive
+reversal 18, matching 44 units, i.e. ≈ 5S, 14S, 4.5S, 11S) and per-phase step costs of roughly
+60/250/60/250 rules, the plan's continuous estimate for phase-specific service, (Σ√(aᵢcᵢ))² ≈ 21k rules,
+does not beat the universal step (36 × ~500 ≈ 18k), because a job's phases are sequential (6A).
+Incremental tables (6B) would cut the r = 3 job's table work from ≈ 14S to ≈ 4S and the flags rate from
+36 toward ≈ 26, about −5k rules, at the price of checkpoint registers: **that is the next cost item.**
