@@ -24,6 +24,9 @@ object Main {
       val (rules, nodes) = g.size
       println(s"machine $name: states=${m.states.size} tapes=${m.tapes} rules=${m.rules.size}; PEG rules=$rules nodes=$nodes")
       Rttm2Peg.check(m, maxLen)
+      if (rest.contains("top")) {
+        for ((n, e) <- g.rules.sortBy { case (_, e) => -Expr.size(e) }.take(12)) { println(s"  BIG ${Expr.size(e)} $n = ${Expr.render(e).take(400)}") }
+      }
       if (rest.contains("print")) { println(g.render) }
     case "slisenko" :: rest =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(10)
@@ -188,6 +191,9 @@ object Main {
         val sz = rs.map { case (_, e) => Expr.size(e) }.sum
         println(f"  layer $t%2d ${if (t == 0) "-" else m.schedule(t - 1)}%-5s rules=${rs.size}%4d symbols=$sz%6d  X=${cnt("X")}%3d K=${cnt("K")}%3d C=${cnt("C_")}%3d other=${rs.size - cnt("X") - cnt("K") - cnt("C_")}%3d")
       }
+      if (rest.contains("top")) {
+        for ((n, e) <- g.rules.sortBy { case (_, e) => -Expr.size(e) }.take(12)) { println(s"  BIG ${Expr.size(e)} $n = ${Expr.render(e).take(400)}") }
+      }
       if (rest.contains("print")) { println(g.render) }
     case "lps-kmp" :: rest =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
@@ -219,6 +225,9 @@ object Main {
       val g = Lpm.compile(LpmKmp.machine, budget)
       val (rules, symbols) = g.size
       println(s"lpm kmp: budget $budget, PEG rules=$rules symbols=$symbols (per layer: rules=${rules / budget} symbols=${symbols / budget})")
+      if (rest.contains("top")) {
+        for ((n, e) <- g.rules.sortBy { case (_, e) => -Expr.size(e) }.take(12)) { println(s"  BIG ${Expr.size(e)} $n = ${Expr.render(e).take(400)}") }
+      }
       if (rest.contains("print")) { println(g.render) }
     case "lpm-kmp" :: rest =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
@@ -308,6 +317,9 @@ object Main {
       val (rules, symbols) = g.size
       println(s"lpm slisenko: budget $budget, PEG rules=$rules symbols=$symbols")
       println(Lpm.check(m, budget, maxLen, LpmSlisenko.oracle).getOrElse(s"ok: interpreter and PEG agree with the oracle on all words of length <= $maxLen"))
+      if (rest.contains("top")) {
+        for ((n, e) <- g.rules.sortBy { case (_, e) => -Expr.size(e) }.take(12)) { println(s"  BIG ${Expr.size(e)} $n = ${Expr.render(e).take(400)}") }
+      }
       if (rest.contains("print")) { println(g.render) }
     case "lpm-marked" :: rest =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(7)
@@ -317,6 +329,9 @@ object Main {
       val (rules, symbols) = g.size
       println(s"lpm marked: budget $budget, PEG rules=$rules symbols=$symbols")
       println(Lpm.check(m, budget, maxLen, LpmMarked.oracle).getOrElse(s"ok: interpreter and PEG agree with the oracle on all words of length <= $maxLen"))
+      if (rest.contains("top")) {
+        for ((n, e) <- g.rules.sortBy { case (_, e) => -Expr.size(e) }.take(12)) { println(s"  BIG ${Expr.size(e)} $n = ${Expr.render(e).take(400)}") }
+      }
       if (rest.contains("print")) { println(g.render) }
     case "slisenko-profile" :: w :: _ =>
       SlisenkoRT.profile(w)

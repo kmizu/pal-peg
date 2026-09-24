@@ -53,7 +53,8 @@ object Lpm {
   }
   final case class Cell(tag: TE, p1: E, p2: E, p3: E, p4: E)
   /** New values for some registers and bits and an optional allocation; the rest is kept. */
-  final case class Step(regs: Map[String, E], bits: Map[String, C], cell: Option[Cell])
+  /** `allocs`: the guarded allocations the cell was merged from (first guard wins), when built by `Prog` */
+  final case class Step(regs: Map[String, E], bits: Map[String, C], cell: Option[Cell], allocs: Vector[(C, Cell)] = Vector())
   final case class Machine(
     alphabet: String,
     regs: Vector[(String, Kind)],
@@ -81,10 +82,11 @@ object Lpm {
       val bs = bits.flatMap { b => bitUpd.get(b).map { us => b -> us.foldRight(C.Bit(b): C) { case ((g, v), acc) => Ite2(g, v, acc) } } }.toMap
       val cell = if (cellUpd.isEmpty) { None } else {
         def fold(f: Cell => E): E = cellUpd.foldRight(E.Null: E) { case ((g, c), acc) => E.Ite(g, f(c), acc) }
-        def foldTag: TE = cellUpd.foldRight(TE.Const(0): TE) { case ((g, c), acc) => TE.Ite(g, c.tag, acc) }
+        // the default is the last allocation's tag: `Made` is only read when some guard fired, so the fallback is dead
+        def foldTag: TE = cellUpd.init.foldRight(cellUpd.last._2.tag) { case ((g, c), acc) => TE.Ite(g, c.tag, acc) }
         Some(Cell(foldTag, fold(_.p1), fold(_.p2), fold(_.p3), fold(_.p4)))
       }
-      Step(rs, bs, cell)
+      Step(rs, bs, cell, cellUpd)
     }
     private def Ite2(g: C, a: C, b: C): C = C.Or(C.And(g, a), C.And(C.Not(g), b))
   }

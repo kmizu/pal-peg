@@ -31,7 +31,7 @@ object Lps {
     def slotAt(t: Int): Step = slots(schedule(t - 1))
     /** tags a step may allocate */
     def tagsOf(step: Step): Set[Int] = step.cell.map(c => tagsOfTE(c.tag)).getOrElse(Set())
-    private def tagsOfTE(te: TE): Set[Int] = te match { case TE.Const(t) => Set(t); case TE.Ite(_, a, b) => tagsOfTE(a) ++ tagsOfTE(b) }
+    def tagsOfTE(te: TE): Set[Int] = te match { case TE.Const(t) => Set(t); case TE.Ite(_, a, b) => tagsOfTE(a) ++ tagsOfTE(b) }
     val layersOfTag: Map[Int, Vector[Int]] = {
       val m = mutable.HashMap.empty[Int, Vector[Int]]
       for (t <- 1 to budget; tag <- tagsOf(slotAt(t))) { m(tag) = m.getOrElse(tag, Vector()) :+ t }
@@ -67,25 +67,56 @@ object Lps {
     private val memoE = mutable.HashMap.empty[(E, Int), P]
     private val memoC = mutable.HashMap.empty[(C, Int), Expr]
     private var fresh = 0
-    private val layerBits: Int = { var b = 1; while ((1 << b) <= B) { b += 1 }; b }
+    /** bits needed to index n alternatives (0 when n <= 1) */
+    private def nbits(n: Int): Int = { var b = 0; while ((1 << b) < n) { b += 1 }; b }
     private val sepTag = m.alphabet.length
     private val regKinds: Map[String, Set[K]] = m.regs.toMap
     private val TrueE: Expr = Seq(Vector())
     private val FalseE: Expr = Not(TrueE)
-    private def and(xs: Expr*): Expr = Seq(xs.toVector)
-    private def or(xs: Expr*): Expr = if (xs.isEmpty) { FalseE } else { Choice(xs.toVector) }
-    private def look(e: Expr): Expr = And(e)
+    // constant folding: TrueE is the empty sequence, FalseE never matches
+    private def and(xs: Expr*): Expr = {
+      val ys = xs.toVector.flatMap { case Seq(ps) => ps; case x => Vector(x) }
+      if (ys.contains(FalseE)) { FalseE } else if (ys.size == 1) { ys.head } else { Seq(ys) }
+    }
+    private def or(xs: Expr*): Expr = {
+      val ys0 = xs.toVector.flatMap { case Choice(as) => as; case x => Vector(x) }.filter(_ != FalseE)
+      val ys = ys0.indexOf(TrueE) match { case -1 => ys0; case i => ys0.take(i + 1) }
+      if (ys.isEmpty) { FalseE } else if (ys.size == 1) { ys.head } else { Choice(ys) }
+    }
+    private def look(e: Expr): Expr = e match {
+      case Seq(ps) if ps.isEmpty => TrueE
+      case And(_) | Not(_) => e
+      case _ => And(e)
+    }
     private val Here: Expr = And(AnyChar)
     private def bitName(x: String, k: Int) = s"${x}_y$k"
-    private def constBits(l: Int): Vector[Expr] = (0 until layerBits).map(k => if (((l >> k) & 1) == 1) { TrueE } else { FalseE }).toVector
+    /** the layer bits of layer `l` among the possible layers `ls`: the binary index of `l` in `ls` */
+    private def constBits(ls: Vector[Int], l: Int): Vector[Expr] = {
+      val i = math.max(ls.indexOf(l), 0)
+      (0 until nbits(ls.size)).map(k => if (((i >> k) & 1) == 1) { TrueE } else { FalseE }).toVector
+    }
+    private def bitRefs(name: String, ls: Vector[Int]): Vector[Expr] = (0 until nbits(ls.size)).map(k => Ref(bitName(name, k))).toVector
 
-    /** A compiled pointer: extent, letter/separator tests, layer bits, and the static kind set. */
+    /** A compiled pointer: extent, letter/separator tests, layer bits (relative to `layers`), and the static kind set. */
     private final case class P(ext: Expr, isLetter: Expr, isSep: Expr, bits: Vector[Expr], kinds: Set[K]) {
       def layers: Vector[Int] = m.layersOf(kinds)
-      def layer(l: Int): Expr =
-        if (layers == Vector(l)) { TrueE }
-        else if (!layers.contains(l)) { FalseE }
-        else { and((0 until layerBits).map { k => if (((l >> k) & 1) == 1) { bits(k) } else { Not(bits(k)) } }*) }
+      def layer(l: Int): Expr = {
+        val ls = layers
+        val i = ls.indexOf(l)
+        if (ls == Vector(l)) { TrueE }
+        else if (i < 0) { FalseE }
+        else { and((0 until nbits(ls.size)).map { k => if (((i >> k) & 1) == 1) { bits(k) } else { Not(bits(k)) } }*) }
+      }
+      /** the same pointer with bits relative to the (larger) kind set `kinds2` */
+      def recode(kinds2: Set[K]): P = {
+        val ls2 = m.layersOf(kinds2)
+        if (ls2 == layers) { copy(kinds = kinds2) }
+        else if (kinds2.subsetOf(kinds) && ls2.size <= 1) { P(ext, isLetter, isSep, Vector(), kinds2) }
+        else {
+          val bits2 = (0 until nbits(ls2.size)).map { k => or(layers.filter(l => ((ls2.indexOf(l) >> k) & 1) == 1).map(l => layer(l))*) }.toVector
+          P(ext, isLetter, isSep, bits2, kinds2)
+        }
+      }
     }
 
     /** last layer (< t, or 0) that writes register/bit x, as a name */
@@ -103,15 +134,19 @@ object Lps {
       val kinds = regKinds(r)
       val name = regName(r, t)
       val ls = m.layersOf(kinds)
-      val bits = if (ls.size >= 2) { (0 until layerBits).map(k => Ref(bitName(name, k))).toVector } else { constBits(ls.headOption.getOrElse(0)) }
+      val bits = bitRefs(name, ls)
       P(Ref(name), if (kinds(KInp)) { Ref(s"${name}_kL") } else { FalseE }, if (kinds(KInp)) { Not(Ref(s"${name}_kL")) } else { FalseE }, bits, kinds)
     }
 
-    private def cellFieldP(l: Int, f: Int): P = {
-      val kinds: Set[K] = m.tagsOf(m.slotAt(l)).flatMap(tag => m.fieldKinds(tag, f))
-      val name = s"C_${l}_p$f"
+    /** field `f` of the cells allocated at layer `l`, one rule per group of tags with the same field kinds */
+    private def fieldGroups(l: Int, f: Int): Vector[(Set[Int], Set[K])] =
+      tagsAt(l).groupBy(tag => m.fieldKinds(tag, f)).toVector.map { case (kinds, tags) => (tags.toSet, kinds) }.sortBy(_._1.min)
+    private def fieldName(l: Int, f: Int, gi: Int): String = if (fieldGroups(l, f).size == 1) { s"C_${l}_p$f" } else { s"C_${l}_p${f}k$gi" }
+    private def cellFieldP(l: Int, f: Int, gi: Int): P = {
+      val kinds = fieldGroups(l, f)(gi)._2
+      val name = fieldName(l, f, gi)
       val ls = m.layersOf(kinds)
-      val bits = if (ls.size >= 2) { (0 until layerBits).map(k => Ref(bitName(name, k))).toVector } else { constBits(ls.headOption.getOrElse(0)) }
+      val bits = bitRefs(name, ls)
       P(Ref(name), if (kinds(KInp)) { Ref(s"${name}_kL") } else { FalseE }, if (kinds(KInp)) { Not(Ref(s"${name}_kL")) } else { FalseE }, bits, kinds)
     }
 
@@ -122,10 +157,8 @@ object Lps {
       val hasInp = p.kinds(KInp)
       if (hasInp) { rules += ((s"${x}_kL", p.isLetter)) }
       val ls = p.layers
-      val bits = if (ls.size >= 2) {
-        for (k <- 0 until layerBits) { rules += ((bitName(x, k), p.bits(k))) }
-        (0 until layerBits).map(k => Ref(bitName(x, k))).toVector
-      } else { constBits(ls.headOption.getOrElse(0)) }
+      for (k <- 0 until nbits(ls.size)) { rules += ((bitName(x, k), p.bits(k))) }
+      val bits = bitRefs(x, ls)
       P(Ref(x), if (hasInp) { Ref(s"${x}_kL") } else { FalseE }, if (hasInp) { Not(Ref(s"${x}_kL")) } else { FalseE }, bits, p.kinds)
     }
 
@@ -135,46 +168,88 @@ object Lps {
     }
 
     private def compE0(e: E, t: Int): P = e match {
-      case Null => P(FalseE, FalseE, FalseE, constBits(0), Set())
+      case Null => P(FalseE, FalseE, FalseE, Vector(), Set())
       case Reg(r) => regP(r, t - 1)
-      case In => P(Here, TrueE, FalseE, constBits(0), Set(KInp))
-      case Sep => P(Here, FalseE, TrueE, constBits(0), Set(KInp))
-      case Made => P(Here, FalseE, FalseE, constBits(t), m.tagsOf(m.slotAt(t)).map(KTag.apply))
+      case In => P(Here, TrueE, FalseE, Vector(), Set(KInp))
+      case Sep => P(Here, FalseE, TrueE, Vector(), Set(KInp))
+      case Made =>
+        val kinds: Set[K] = m.tagsOf(m.slotAt(t)).map(KTag.apply)
+        P(Here, FalseE, FalseE, constBits(m.layersOf(kinds), t), kinds)
       case Ite(c, a, b) =>
         val cc = compC(c, t)
-        val pa = compE(a, t)
-        val pb = compE(b, t)
+        val kinds = compE(a, t).kinds ++ compE(b, t).kinds
+        val pa = compE(a, t).recode(kinds)
+        val pb = compE(b, t).recode(kinds)
         def sel(fa: Expr, fb: Expr): Expr = or(and(look(cc), fa), and(Not(cc), fb))
-        P(sel(pa.ext, pb.ext), sel(pa.isLetter, pb.isLetter), sel(pa.isSep, pb.isSep), (0 until layerBits).map(k => sel(pa.bits(k), pb.bits(k))).toVector, pa.kinds ++ pb.kinds)
+        P(sel(pa.ext, pb.ext), sel(pa.isLetter, pb.isLetter), sel(pa.isSep, pb.isSep), (0 until nbits(m.layersOf(kinds).size)).map(k => sel(pa.bits(k), pb.bits(k))).toVector, kinds)
       case Fld(x, f) =>
         val px = compE(x, t)
         val alts = Vector.newBuilder[(Expr, P)]
         if (px.kinds(KInp) && f == 1) {
-          alts += ((px.isLetter, P(and(AnyChar, Here), FalseE, TrueE, constBits(0), Set(KInp))))
-          alts += ((px.isSep, P(Here, TrueE, FalseE, constBits(0), Set(KInp))))
+          alts += ((and(look(px.isLetter), px.ext), P(and(AnyChar, Here), FalseE, TrueE, Vector(), Set(KInp))))
+          alts += ((and(look(px.isSep), px.ext), P(Here, TrueE, FalseE, Vector(), Set(KInp))))
         }
-        for (l <- px.layers) { alts += ((px.layer(l), cellFieldP(l, f))) }
-        val as = alts.result()
-        def choose(g: P => Expr): Expr = or(as.map { case (guard, fp) => and(look(guard), px.ext, g(fp)) }*)
+        val pxTags: Set[Int] = px.kinds.collect { case KTag(tag) => tag }
+        for (l <- px.layers) {
+          val groups = fieldGroups(l, f)
+          for (((tags, _), gi) <- groups.zipWithIndex if tags.intersect(pxTags).nonEmpty) {
+            // when the layer's cells split into several groups, the group is recognised by the cell's tag
+            val atCell = if (groups.size == 1) { TrueE } else { or(tags.intersect(pxTags).toVector.sorted.map(tag => tagTest(l, tag))*) }
+            alts += ((and(look(px.layer(l)), px.ext, look(atCell)), cellFieldP(l, f, gi)))
+          }
+        }
+        val kinds: Set[K] = alts.result().flatMap(_._2.kinds).toSet
+        val as = alts.result().map { case (g, fp) => (g, fp.recode(kinds)) }
+        def choose(g: P => Expr): Expr = or(as.map { case (guard, fp) => and(guard, g(fp)) }*)
         // predicates (letter/separator test, layer bits) must be zero-width: look past the extent of x
         def pred(g: P => Expr): Expr = look(choose(p => look(g(p))))
-        val kinds: Set[K] = as.flatMap(_._2.kinds).toSet
-        val bits = (0 until layerBits).map { k => pred(_.bits(k)) }.toVector
+        val bits = (0 until nbits(m.layersOf(kinds).size)).map { k => pred(_.bits(k)) }.toVector
         P(choose(_.ext), pred(_.isLetter), pred(_.isSep), bits, kinds)
     }
 
+    /** how often each condition occurs in the slot being compiled (an And/Or is named only when shared) */
+    private val uses = mutable.HashMap.empty[C, Int]
+    private def countC(c: C): Unit = {
+      uses(c) = uses.getOrElse(c, 0) + 1
+      c match {
+        case C.Not(x) => countC(x)
+        case C.And(a, b) => countC(a); countC(b)
+        case C.Or(a, b) => countC(a); countC(b)
+        case C.IsNull(e) => countE(e)
+        case C.TagIs(e, _) => countE(e)
+        case C.SameTag(a, b) => countE(a); countE(b)
+        case _ => ()
+      }
+    }
+    private def countE(e: E): Unit = e match {
+      case Fld(x, _) => countE(x)
+      case Ite(c, a, b) => countC(c); countE(a); countE(b)
+      case _ => ()
+    }
+    private def countTE(te: TE): Unit = te match { case TE.Ite(c, a, b) => countC(c); countTE(a); countTE(b); case _ => () }
+    private def countStep(step: Step): Unit = {
+      uses.clear()
+      step.regs.values.foreach(countE)
+      step.bits.values.foreach(countC)
+      step.allocs.foreach { case (g, c) => countC(g); countTE(c.tag); countE(c.p1); countE(c.p2); countE(c.p3); countE(c.p4) }
+      if (step.allocs.isEmpty) { step.cell.foreach { c => countTE(c.tag); countE(c.p1); countE(c.p2); countE(c.p3); countE(c.p4) } }
+    }
+
     private def compC(c: C, t: Int): Expr = c match {
+      case C.And(_, _) | C.Or(_, _) if uses.getOrElse(c, 0) <= 1 => compC0(c, t)
       case C.And(_, _) | C.Or(_, _) | C.IsNull(_) | C.TagIs(_, _) | C.SameTag(_, _) =>
         memoC.getOrElseUpdate((c, t), { val x = compC0(c, t); fresh += 1; val n = s"K${fresh}_$t"; rules += ((n, x)); Ref(n) })
       case _ => compC0(c, t)
     }
 
-    private val tagBits = 4
+    /** the tags a slot can allocate, sorted; a cell's tag is stored as its index among them */
+    private def tagsAt(l: Int): Vector[Int] = m.tagsOf(m.slotAt(l)).toVector.sorted
     private def tagTest(l: Int, tag: Int): Expr = {
-      val tags = m.tagsOf(m.slotAt(l))
-      if (!tags(tag)) { FalseE }
+      val tags = tagsAt(l)
+      val i = tags.indexOf(tag)
+      if (i < 0) { FalseE }
       else if (tags.size == 1) { TrueE }
-      else { and((0 until tagBits).map { k => if (((tag >> k) & 1) == 1) { Ref(s"C_${l}_g$k") } else { Not(Ref(s"C_${l}_g$k")) } }*) }
+      else { and((0 until nbits(tags.size)).map { k => if (((i >> k) & 1) == 1) { Ref(s"C_${l}_g$k") } else { Not(Ref(s"C_${l}_g$k")) } }*) }
     }
 
     private def compC0(c: C, t: Int): Expr = c match {
@@ -199,14 +274,17 @@ object Lps {
     }
 
     private def compTE(te: TE, t: Int, k: Int): Expr = te match {
-      case TE.Const(v) => if (((v >> k) & 1) == 1) { TrueE } else { FalseE }
+      case TE.Const(v) => if (((tagsAt(t).indexOf(v) >> k) & 1) == 1) { TrueE } else { FalseE }
       case TE.Ite(c, a, b) => val cc = compC(c, t); or(and(look(cc), compTE(a, t, k)), and(Not(cc), compTE(b, t, k)))
     }
 
-    private def emitPointer(name: String, p: P, kinds: Set[K]): Unit = {
+    private def emitPointer(name: String, p0: P, kinds: Set[K]): Unit = {
+      // the static kinds of the value may be wider than the declared kinds (e.g. `Made` in a slot that allocates
+      // several tags); the declaration is trusted, and layers outside it are dropped by the recoding
+      val p = p0.recode(kinds)
       rules += ((name, p.ext))
       if (kinds(KInp)) { rules += ((s"${name}_kL", p.isLetter)) }
-      if (m.layersOf(kinds).size >= 2) { for (k <- 0 until layerBits) { rules += ((bitName(name, k), p.bits(k))) } }
+      for (k <- 0 until nbits(m.layersOf(kinds).size)) { rules += ((bitName(name, k), p.bits(k))) }
     }
 
     def grammar(): Grammar = {
@@ -217,7 +295,7 @@ object Lps {
         val last = regName(r, B)
         rules += ((s"${r}_0", and(AnyChar, Ref(last))))
         if (kinds(KInp)) { rules += ((s"${r}_0_kL", look(and(AnyChar, Ref(s"${last}_kL"))))) }
-        if (m.layersOf(kinds).size >= 2) { for (k <- 0 until layerBits) { rules += ((bitName(s"${r}_0", k), look(and(AnyChar, Ref(bitName(last, k)))))) } }
+        for (k <- 0 until nbits(m.layersOf(kinds).size)) { rules += ((bitName(s"${r}_0", k), look(and(AnyChar, Ref(bitName(last, k)))))) }
       }
       for (b <- m.bits) {
         val carried = look(and(AnyChar, bitRef(b, B)))
@@ -225,13 +303,16 @@ object Lps {
       }
       for (t <- 1 to B) {
         val step = m.slotAt(t)
+        countStep(step)
         step.cell.foreach { cl =>
           val tags = m.tagsOf(step)
-          if (tags.size >= 2) { for (k <- 0 until tagBits) { rules += ((s"C_${t}_g$k", compTE(cl.tag, t, k))) } }
-          for (f <- 1 to 4) {
-            val kinds: Set[K] = tags.flatMap(tag => m.fieldKinds(tag, f))
-            val src = f match { case 1 => cl.p1; case 2 => cl.p2; case 3 => cl.p3; case _ => cl.p4 }
-            if (kinds.nonEmpty) { emitPointer(s"C_${t}_p$f", compE(src, t), kinds) }
+          for (k <- 0 until nbits(tags.size)) { rules += ((s"C_${t}_g$k", compTE(cl.tag, t, k))) }
+          for (f <- 1 to 4; ((gtags, kinds), gi) <- fieldGroups(t, f).zipWithIndex if kinds.nonEmpty) {
+            def fieldOf(c: Lpm.Cell): E = f match { case 1 => c.p1; case 2 => c.p2; case 3 => c.p3; case _ => c.p4 }
+            // the field restricted to the allocations whose tag may be in this group (first guard wins)
+            val mine = step.allocs.filter { case (_, c) => m.tagsOfTE(c.tag).intersect(gtags).nonEmpty }
+            val src: E = if (step.allocs.isEmpty) { fieldOf(cl) } else { mine.foldRight(Null: E) { case ((g, c), acc) => Ite(g, fieldOf(c), acc) } }
+            emitPointer(fieldName(t, f, gi), compE(src, t), kinds)
           }
         }
         for ((r, kinds) <- m.regs) { step.regs.get(r).foreach { e => emitPointer(s"${r}_$t", compE(e, t), kinds) } }
