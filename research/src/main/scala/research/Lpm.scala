@@ -1,5 +1,7 @@
 package research
 
+import scala.collection.mutable
+
 
 /** Layered pointer machines: the model in which a real-time recognizer is written before it is
   * compiled to a PEG.
@@ -59,6 +61,34 @@ object Lpm {
     initTrue: Set[String],
     accept: String,
     step: Step)
+
+  /** Guarded parallel updates; the first guard that holds wins. */
+  final class Prog(phaseBits: Int, subBits: Int) {
+    private val regUpd = mutable.HashMap.empty[String, Vector[(C, E)]]
+    private val bitUpd = mutable.HashMap.empty[String, Vector[(C, C)]]
+    private var cellUpd = Vector.empty[(C, Cell)]
+    final class Upd(g: C) {
+      def set(r: String, v: E): Unit = { regUpd(r) = regUpd.getOrElse(r, Vector()) :+ ((g, v)) }
+      def bit(b: String, v: C): Unit = { bitUpd(b) = bitUpd.getOrElse(b, Vector()) :+ ((g, v)) }
+      def alloc(tag: TE, p1: E = E.Null, p2: E = E.Null, p3: E = E.Null, p4: E = E.Null): E = { cellUpd = cellUpd :+ ((g, Cell(tag, p1, p2, p3, p4))); E.Made }
+      def alloc(tag: Int, p1: E, p2: E, p3: E, p4: E): E = alloc(TE.Const(tag), p1, p2, p3, p4)
+      def phase(k: Int): Unit = { for (i <- 0 until phaseBits) { bit(s"p$i", if (((k >> i) & 1) == 1) { C.True } else { C.False }) }; sub(0) }
+      def sub(k: Int): Unit = { for (i <- 0 until subBits) { bit(s"s$i", if (((k >> i) & 1) == 1) { C.True } else { C.False }) } }
+    }
+    def when(g: C)(f: Upd => Unit): Unit = f(new Upd(g))
+    def build(regs: Vector[String], bits: Vector[String]): Step = {
+      val rs = regs.flatMap { r => regUpd.get(r).map { us => r -> us.foldRight(E.Reg(r): E) { case ((g, v), acc) => E.Ite(g, v, acc) } } }.toMap
+      val bs = bits.flatMap { b => bitUpd.get(b).map { us => b -> us.foldRight(C.Bit(b): C) { case ((g, v), acc) => Ite2(g, v, acc) } } }.toMap
+      val cell = if (cellUpd.isEmpty) { None } else {
+        def fold(f: Cell => E): E = cellUpd.foldRight(E.Null: E) { case ((g, c), acc) => E.Ite(g, f(c), acc) }
+        def foldTag: TE = cellUpd.foldRight(TE.Const(0): TE) { case ((g, c), acc) => TE.Ite(g, c.tag, acc) }
+        Some(Cell(foldTag, fold(_.p1), fold(_.p2), fold(_.p3), fold(_.p4)))
+      }
+      Step(rs, bs, cell)
+    }
+    private def Ite2(g: C, a: C, b: C): C = C.Or(C.And(g, a), C.And(C.Not(g), b))
+  }
+
 
   // ---- interpreter ------------------------------------------------------------------------
 

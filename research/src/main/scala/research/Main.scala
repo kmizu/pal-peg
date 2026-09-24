@@ -85,6 +85,47 @@ object Main {
         }
         prevSep = sep
       }
+    case "lpm-kmp-sim" :: rest =>
+      val maxLen = rest.headOption.map(_.toInt).getOrElse(8)
+      val budget = rest.drop(1).headOption.map(_.toInt).getOrElse(4000)
+      val m = LpmKmp.machine
+      def perTick(w: String): Option[String] = {
+        val run = Lpm.run(m, w, budget)
+        val rd = w.reverse
+        val want = (1 to w.length).map(k => LpmKmp.oracle(rd.take(k).reverse))
+        if (run.outputs == want) { None } else { Some(s"'$w' (reading ${rd}): got ${run.outputs.map(b => if (b) "1" else "0").mkString} want ${want.map(b => if (b) "1" else "0").mkString}; units ${run.unitsNeeded.mkString(",")}") }
+      }
+      val it = Exhaust.words(maxLen, "ab#")
+      var bad: Option[String] = None
+      var count = 0
+      var worst = 0
+      while (bad.isEmpty && it.hasNext) {
+        val w = it.next()
+        count += 1
+        if (w.nonEmpty) { bad = perTick(w); worst = math.max(worst, Lpm.run(m, w, budget).unitsNeeded.max) }
+      }
+      println(bad.getOrElse(s"ok: kmp interpreter agrees on all $count words of length <= $maxLen at budget $budget; max units per tick = $worst"))
+    case "lpm-kmp-size" :: rest =>
+      val budget = rest.headOption.map(_.toInt).getOrElse(8)
+      val g = Lpm.compile(LpmKmp.machine, budget)
+      val (rules, symbols) = g.size
+      println(s"lpm kmp: budget $budget, PEG rules=$rules symbols=$symbols (per layer: rules=${rules / budget} symbols=${symbols / budget})")
+      if (rest.contains("print")) { println(g.render) }
+    case "lpm-kmp" :: rest =>
+      val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
+      val budget = rest.drop(1).headOption.map(_.toInt).getOrElse(8)
+      val g = Lpm.compile(LpmKmp.machine, budget)
+      val (rules, symbols) = g.size
+      println(s"lpm kmp: budget $budget, PEG rules=$rules symbols=$symbols")
+      println(Lpm.check(LpmKmp.machine, budget, maxLen, LpmKmp.oracle).getOrElse(s"ok: interpreter and PEG agree with the oracle on all words of length <= $maxLen"))
+    case "lpm-slisenko-word" :: w :: rest =>
+      val budget = rest.headOption.map(_.toInt).getOrElse(4000)
+      val run = Lpm.run(LpmSlisenko.machine, w, budget)
+      val want = (1 to w.length).map(k => Exhaust.isPal(w.substring(w.length - k)))
+      println(s"word $w budget $budget")
+      println("  got  " + run.outputs.map(b => if (b) { "1" } else { "0" }).mkString)
+      println("  want " + want.map(b => if (b) { "1" } else { "0" }).mkString)
+      println("  units " + run.unitsNeeded.mkString(","))
     case "lpm-slisenko-budget" :: rest =>
       // smallest budget with which every word of length <= maxLen is classified correctly at every tick
       val maxLen = rest.headOption.map(_.toInt).getOrElse(10)

@@ -1,6 +1,5 @@
 package research
 
-import scala.collection.mutable
 
 /** Slisenko's real-time recognizer of initial palindromes as a layered pointer machine.
   *
@@ -58,33 +57,6 @@ object LpmSlisenko {
   val bitNames: Vector[String] = (0 until phaseBits).map(i => s"p$i").toVector ++ (0 until subBits).map(i => s"s$i").toVector ++
     Vector("wait", "acc", "needSep", "useCur", "lm1", "par", "parL", "bnd", "tog", "endMis", "imm", "switched", "eq", "kSame", "rev", "arev")
 
-  /** Guarded parallel updates; the first guard that holds wins. */
-  final class Prog {
-    private val regUpd = mutable.HashMap.empty[String, Vector[(C, E)]]
-    private val bitUpd = mutable.HashMap.empty[String, Vector[(C, C)]]
-    private var cellUpd = Vector.empty[(C, Cell)]
-    final class Upd(g: C) {
-      def set(r: String, v: E): Unit = { regUpd(r) = regUpd.getOrElse(r, Vector()) :+ ((g, v)) }
-      def bit(b: String, v: C): Unit = { bitUpd(b) = bitUpd.getOrElse(b, Vector()) :+ ((g, v)) }
-      def alloc(tag: TE, p1: E = Null, p2: E = Null, p3: E = Null, p4: E = Null): E = { cellUpd = cellUpd :+ ((g, Cell(tag, p1, p2, p3, p4))); Made }
-      def alloc(tag: Int, p1: E, p2: E, p3: E, p4: E): E = alloc(TE.Const(tag), p1, p2, p3, p4)
-      def phase(k: Int): Unit = { for (i <- 0 until phaseBits) { bit(s"p$i", if (((k >> i) & 1) == 1) { True } else { False }) }; sub(0) }
-      def sub(k: Int): Unit = { for (i <- 0 until subBits) { bit(s"s$i", if (((k >> i) & 1) == 1) { True } else { False }) } }
-    }
-    def when(g: C)(f: Upd => Unit): Unit = f(new Upd(g))
-    def build(regs: Vector[String], bits: Vector[String]): Step = {
-      val rs = regs.flatMap { r => regUpd.get(r).map { us => r -> us.foldRight(Reg(r): E) { case ((g, v), acc) => Ite(g, v, acc) } } }.toMap
-      val bs = bits.flatMap { b => bitUpd.get(b).map { us => b -> us.foldRight(Bit(b): C) { case ((g, v), acc) => Ite2(g, v, acc) } } }.toMap
-      val cell = if (cellUpd.isEmpty) { None } else {
-        def fold(f: Cell => E): E = cellUpd.foldRight(Null: E) { case ((g, c), acc) => Ite(g, f(c), acc) }
-        def foldTag: TE = cellUpd.foldRight(TE.Const(0): TE) { case ((g, c), acc) => TE.Ite(g, c.tag, acc) }
-        Some(Cell(foldTag, fold(_.p1), fold(_.p2), fold(_.p3), fold(_.p4)))
-      }
-      Step(rs, bs, cell)
-    }
-    private def Ite2(g: C, a: C, b: C): C = Or(And(g, a), And(Not(g), b))
-  }
-
   private def phaseIs(k: Int): C = all((0 until phaseBits).map { i => if (((k >> i) & 1) == 1) { Bit(s"p$i") } else { Not(Bit(s"p$i")) } }*)
   private def subIs(k: Int): C = all((0 until subBits).map { i => if (((k >> i) & 1) == 1) { Bit(s"s$i") } else { Not(Bit(s"s$i")) } }*)
   private def r(n: String): E = Reg(n)
@@ -96,7 +68,7 @@ object LpmSlisenko {
   private def not(c: C): C = Not(c)
 
   def machine: Machine = {
-    val p = new Prog
+    val p = new Prog(phaseBits, subBits)
     val active = all(not(First), not(B("needSep")), not(B("wait")))
     def at(k: Int, s: Int = -1): C = if (s < 0) { And(active, phaseIs(k)) } else { all(active, phaseIs(k), subIs(s)) }
 
