@@ -81,6 +81,11 @@ object Lps {
   final class Compiler(m: Machine) {
     private val B = m.budget
     private val rules = Vector.newBuilder[(String, Expr)]
+    /** generation metadata: the layer and the slot name of every emitted rule (S and the layer-0 aliases: layer 0, "-") */
+    private var curLayer = 0
+    private val metaB = Map.newBuilder[String, RuleMeta]
+    private def emit(r: (String, Expr)): Unit = { rules += r; metaB += r._1 -> RuleMeta(curLayer, if (curLayer == 0) { "-" } else { m.schedule(curLayer - 1) }) }
+    def meta: Map[String, RuleMeta] = metaB.result()
     private val memoE = mutable.HashMap.empty[(E, Int), P]
     private val memoC = mutable.HashMap.empty[(C, Int), Expr]
     private var fresh = 0
@@ -168,11 +173,11 @@ object Lps {
     private def named(p: P, t: Int): P = {
       fresh += 1
       val x = s"X${fresh}_$t"
-      rules += ((x, p.ext))
+      emit((x, p.ext))
       val hasInp = p.kinds(KInp)
-      if (hasInp) { rules += ((s"${x}_kL", p.isLetter)) }
+      if (hasInp) { emit((s"${x}_kL", p.isLetter)) }
       val ss = p.sites
-      for (k <- 0 until nbits(ss.size)) { rules += ((bitName(x, k), p.bits(k))) }
+      for (k <- 0 until nbits(ss.size)) { emit((bitName(x, k), p.bits(k))) }
       val bits = bitRefs(x, ss)
       P(Ref(x), if (hasInp) { Ref(s"${x}_kL") } else { FalseE }, if (hasInp) { Not(Ref(s"${x}_kL")) } else { FalseE }, bits, p.kinds)
     }
@@ -205,7 +210,14 @@ object Lps {
         val kinds = cs.map(_._2.kinds).foldLeft(pd.kinds)(_ ++ _)
         val rs = cs.map { case (g, pa) => (g, pa.recode(kinds)) }
         val pdr = pd.recode(kinds)
-        def sel(f: P => Expr): Expr = or((rs.map { case (g, pa) => and(look(g), f(pa)) } :+ and(and(rs.map { case (g, _) => Not(g) }*), f(pdr)))*)
+        // exclusive masks: the alternative of the first condition that holds is the only one tried, so a
+        // selected value that fails (null, a false bit, a failed test) never falls through to a later one
+        val masks = Vector.newBuilder[Expr]
+        var remaining: Vector[Expr] = Vector()
+        for ((g, _) <- rs) { masks += and((remaining :+ g)*); remaining = remaining :+ Not(g) }
+        val ms = masks.result()
+        val rest = and(remaining*)
+        def sel(f: P => Expr): Expr = or((ms.zip(rs).map { case (h, (_, pa)) => and(look(h), f(pa)) } :+ and(look(rest), f(pdr)))*)
         P(sel(_.ext), sel(_.isLetter), sel(_.isSep), (0 until nbits(m.sitesOf(kinds).size)).map(k => sel(_.bits(k))).toVector, kinds)
       case Fld(x, f) =>
         val px = compE(x, t)
@@ -265,7 +277,7 @@ object Lps {
     private def compC(c: C, t: Int): Expr = c match {
       case C.And(_, _) | C.Or(_, _) if uses.getOrElse(c, 0) <= 1 => memoC.getOrElseUpdate((c, t), compC0(c, t))
       case C.And(_, _) | C.Or(_, _) | C.IsNull(_) | C.TagIs(_, _) | C.SameTag(_, _) =>
-        memoC.getOrElseUpdate((c, t), { val x = compC0(c, t); fresh += 1; val n = s"K${fresh}_$t"; rules += ((n, x)); Ref(n) })
+        memoC.getOrElseUpdate((c, t), { val x = compC0(c, t); fresh += 1; val n = s"K${fresh}_$t"; emit((n, x)); Ref(n) })
       case C.Not(_) => memoC.getOrElseUpdate((c, t), compC0(c, t))
       case _ => compC0(c, t)
     }
@@ -324,45 +336,50 @@ object Lps {
       // the static kinds of the value may be wider than the declared kinds (e.g. `Made` in a slot that allocates
       // several tags); the declaration is trusted, and layers outside it are dropped by the recoding
       val p = p0.recode(kinds)
-      rules += ((name, p.ext))
-      if (kinds(KInp)) { rules += ((s"${name}_kL", p.isLetter)) }
-      for (k <- 0 until nbits(m.sitesOf(kinds).size)) { rules += ((bitName(name, k), p.bits(k))) }
+      emit((name, p.ext))
+      if (kinds(KInp)) { emit((s"${name}_kL", p.isLetter)) }
+      for (k <- 0 until nbits(m.sitesOf(kinds).size)) { emit((bitName(name, k), p.bits(k))) }
     }
 
     def grammar(): Grammar = {
       val empty: Expr = if (m.initTrue(m.accept)) { Not(AnyChar) } else { FalseE }
-      rules += (("S", or(empty, and(look(bitRef(m.accept, B)), Star(AnyChar)))))
+      // the accept bit is read only when there is a letter (its rules at the end node would be a phantom tick)
+      emit(("S", or(empty, and(look(AnyChar), look(bitRef(m.accept, B)), Star(AnyChar)))))
       // layer 0: the previous node's last definitions. The node after the last letter has no tick: its
       // rules would still evaluate (a phantom tick), so the initial state is taken there instead.
       val prev: Expr = and(AnyChar, look(AnyChar))
       for ((r, kinds) <- m.regs) {
         val last = regName(r, B)
-        rules += ((s"${r}_0", and(prev, Ref(last))))
-        if (kinds(KInp)) { rules += ((s"${r}_0_kL", look(and(prev, Ref(s"${last}_kL"))))) }
-        for (k <- 0 until nbits(m.sitesOf(kinds).size)) { rules += ((bitName(s"${r}_0", k), look(and(prev, Ref(bitName(last, k)))))) }
+        emit((s"${r}_0", and(prev, Ref(last))))
+        if (kinds(KInp)) { emit((s"${r}_0_kL", look(and(prev, Ref(s"${last}_kL"))))) }
+        for (k <- 0 until nbits(m.sitesOf(kinds).size)) { emit((bitName(s"${r}_0", k), look(and(prev, Ref(bitName(last, k)))))) }
       }
       for (b <- m.bits) {
         val carried = look(and(prev, bitRef(b, B)))
-        rules += ((s"${b}_0", if (m.initTrue(b)) { or(carried, look(and(AnyChar, Not(AnyChar)))) } else { carried }))
+        emit((s"${b}_0", if (m.initTrue(b)) { or(carried, look(and(AnyChar, Not(AnyChar)))) } else { carried }))
       }
       for (t <- 1 to B) {
+        curLayer = t
         val step = m.slotAt(t)
         countStep(step)
         for (((_, cl), i) <- m.sitesAt(t).zipWithIndex) {
-          for (k <- 0 until nbits(m.tagsAt(t, i).size)) { rules += ((s"C_${t}_${i}_g$k", compTE(cl.tag, t, i, k))) }
+          for (k <- 0 until nbits(m.tagsAt(t, i).size)) { emit((s"C_${t}_${i}_g$k", compTE(cl.tag, t, i, k))) }
           for (f <- 1 to 4; kinds = fieldKindsAt(t, i, f) if kinds.nonEmpty) {
             val src: E = f match { case 1 => cl.p1; case 2 => cl.p2; case 3 => cl.p3; case _ => cl.p4 }
             emitPointer(fieldName(t, i, f), src, t, kinds)
           }
         }
         for ((r, kinds) <- m.regs) { step.regs.get(r).foreach { e => emitPointer(s"${r}_$t", e, t, kinds) } }
-        for (b <- m.bits) { step.bits.get(b).foreach { c => rules += ((s"${b}_$t", compC(c, t))) } }
+        for (b <- m.bits) { step.bits.get(b).foreach { c => emit((s"${b}_$t", compC(c, t))) } }
       }
       new Grammar(rules.result())
     }
   }
 
+  final case class RuleMeta(layer: Int, slot: String)
   def compile(m: Machine): Grammar = new Compiler(m).grammar()
+  /** the grammar with the layer and slot of every rule */
+  def compileMeta(m: Machine): (Grammar, Map[String, RuleMeta]) = { val c = new Compiler(m); val g = c.grammar(); (g, c.meta) }
 
   /** the same machine with each group of consecutive slots fused into one slot (exact: sequential composition) */
   def fused(m: Machine, groups: Vector[Vector[String]]): Machine = {

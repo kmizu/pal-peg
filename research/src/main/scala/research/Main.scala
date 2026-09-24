@@ -283,6 +283,22 @@ object Main {
       val mg = rest.drop(1).headOption.map(_.toInt).getOrElse(2)
       val fg = rest.drop(2).headOption.map(_.toInt).getOrElse(3)
       println(Lps.check(LpsPal.machine(mg, fg), maxLen, LpsPal.isPal).getOrElse(s"ok: slot PAL interpreter and PEG agree with the oracle on all words of length <= $maxLen"))
+    case "lps-metrics" :: which :: rest =>
+      // lps-metrics kmp2 <n> <out.json> | lps-metrics pal2 <m> <f> <out.json>
+      val (m, label, extra) = which match {
+        case "kmp2" => (LpsKmp2.machine(rest(0).toInt), s"kmp2 n=${rest(0)}", Seq("machine_variant" -> "LpsKmp2", "mSteps" -> rest(0), "fSteps" -> "-"))
+        case _ => (LpsPal2.machine(rest(0).toInt, rest(1).toInt), s"pal2 ${rest(0)}/${rest(1)}", Seq("machine_variant" -> "LpsPal2", "mSteps" -> rest(0), "fSteps" -> rest(1)))
+      }
+      val out = rest.last
+      val t0 = System.nanoTime()
+      val (g, meta) = Lps.compileMeta(m)
+      val gen = (System.nanoTime() - t0) / 1e9
+      val mt = PegMetrics.of(g, n => meta.get(n).map(_.slot).getOrElse(PegMetrics.componentOfName(n)))
+      val commit = scala.sys.process.Process(Seq("git", "rev-parse", "--short", "HEAD")).!!.trim
+      val json = mt.json(extra ++ Seq("source_commit" -> commit, "compiler_variant" -> "Lps", "generation_seconds" -> f"$gen%.2f"))
+      java.nio.file.Files.write(java.nio.file.Paths.get(out), json.getBytes("UTF-8"))
+      println(PegMetrics.markdownHeader)
+      println(mt.markdownRow(label))
     case "lps-kmp2" :: rest =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
       val n = rest.drop(1).headOption.map(_.toInt).getOrElse(6)
