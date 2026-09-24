@@ -68,3 +68,45 @@ letter exists is open; it is the question that decides the size of the smallest 
   `run slisenko-stress`, `run slisenko-profile <word>`).
 - `Psm.scala`: a first pointer-machine sketch (marked palindromes), superseded by the analysis
   above.
+
+## 4. Slot-scheduled pointer machines (2026-09-24, DESIGN.md route)
+
+`Lps.scala` compiles a pointer machine with a fixed schedule of slots per tick (one layer of
+nonterminals per slot, registers alias to their last writer, pointers carry "site bits" naming
+the allocation site (layer, index) among the sites that can allocate their kind). `LpsKmp.scala` is
+the DESIGN §2 KMP matcher, `LpsPal.scala` the whole recognizer (controller with dyadic clocks
+kept as pointers into the input history, one matcher per stage, one shared flags worker that
+builds the forward view, runs the matcher with the full match kept, walks the failure chain into
+a gap stack and skips to r·S, and a controller that consumes one flag per tick).
+
+Measured (`run lps-kmp-size`, `run lps-pal-size`; all grammars agree with the interpreter and, at
+the working rates, with the oracle; the Rust plain-PEG runner accepts the printed grammars):
+
+| machine | slots/tick | rules | symbols |
+|---|---|---|---|
+| KMP matcher alone, 2 groups | 21 | 2,037 | 29,581 |
+| KMP matcher alone, 3 groups | 31 | 3,213 | 65,693 |
+| PAL, matchers 6 groups, flags 16 groups (interpreter correct on all words ≤ 10 and 1,500 random words ≤ 81) | 318 | 62,012 | 7.06M |
+| PAL, same, each group fused into one slot (`fusion = 1`, exact sequential composition) | 34 | 53,280 | 7.05M |
+| PAL, also the controller slots fused into their neighbours (`fusion = 2`) | 29 | 53,147 | 7.05M |
+
+What the numbers say:
+
+- The working rates are far above DESIGN's 41 local steps per input: a "group" of ten micro-slots
+  processes one letter and two back-up steps, and the flags job of size 4S must finish within S
+  ticks, so 16 groups per tick were needed (6 for the matchers, whose 16-letter table build took 8
+  ticks at 3 groups).
+- Fusing slots does not shrink the grammar: the rules are the distinct expression nodes
+  (dereferences `X`, conditions `K`), and fusion keeps every node of every micro-step. The
+  per-layer fixed cost (register aliases, phase tests) was small.
+- Hence the size is set by the micro-step decomposition itself: sub-phase counters, `at(phase,
+  sub)` guards, one allocation per slot, queue reversals as separate steps. A local step in
+  DESIGN's sense (fixed number of records, fixed-depth reads, one guard set) has to be written as
+  one slot with several allocation sites (now supported: `E.MadeAt`, `Lpm.fuse`, site bits) —
+  that is the remaining work, not more compiler optimisation.
+
+Pitfalls fixed on the way (see the commits): a dereferenced field's predicates consumed the base
+pointer's extent; `Prog` branches were not exclusive (first-wins is per register); the node after
+the last letter evaluated a phantom tick; shared cell tags made every pointer dispatch over all
+modules' layers; fused expressions are DAGs, so hashes are cached and evaluation, substitution and
+use-counting are memoised.

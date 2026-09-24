@@ -21,17 +21,20 @@ object Lpm {
   case object Inp extends Kind
   case object Mach extends Kind
 
-  sealed trait E
+  /** expressions are shared DAGs after fusion: the hash is cached so that hashing and memoisation stay linear */
+  sealed trait Hashed extends Product { override val hashCode: Int = scala.util.hashing.MurmurHash3.productHash(this) }
+  sealed trait E extends Hashed
   object E {
     case object Null extends E
     final case class Reg(r: String) extends E
     final case class Fld(e: E, f: Int) extends E          // f = 1 (input cell), 2, 3, 4 (machine cells)
     case object In extends E                               // this tick's letter cell
     case object Sep extends E                              // this tick's separator cell
-    case object Made extends E                             // the cell allocated by this unit
+    case object Made extends E                             // the cell allocated by this unit (resolved by Prog to the branch's last allocation)
+    final case class MadeAt(site: Int) extends E           // the cell allocated at site `site` (0-based) of this unit
     final case class Ite(c: C, a: E, b: E) extends E
   }
-  sealed trait C
+  sealed trait C extends Hashed
   object C {
     case object True extends C
     case object False extends C
@@ -46,7 +49,7 @@ object Lpm {
     def all(cs: C*): C = cs.reduceLeft(And.apply)
     def any(cs: C*): C = cs.reduceLeft(Or.apply)
   }
-  sealed trait TE
+  sealed trait TE extends Hashed
   object TE {
     final case class Const(t: Int) extends TE
     final case class Ite(c: C, a: TE, b: TE) extends TE
@@ -63,6 +66,55 @@ object Lpm {
     accept: String,
     step: Step)
 
+  /** the allocation sites of a unit merged into one cell (first guard wins); the merged view is used by the
+    * layered compiler and by hand-built steps */
+  def mergeCell(allocs: Vector[(C, Cell)]): Option[Cell] = if (allocs.isEmpty) { None } else {
+    def fold(f: Cell => E): E = allocs.foldRight(E.Null: E) { case ((g, c), acc) => E.Ite(g, f(c), acc) }
+    // the default is the last allocation's tag: a site is only read when its guard fired, so the fallback is dead
+    def foldTag: TE = allocs.init.foldRight(allocs.last._2.tag) { case ((g, c), acc) => TE.Ite(g, c.tag, acc) }
+    Some(Cell(foldTag, fold(_.p1), fold(_.p2), fold(_.p3), fold(_.p4)))
+  }
+
+  /** substitution of registers, bits and allocation sites (`made(-1)` resolves a plain `Made`) */
+  final class Subst(regs: String => Option[E], bits: String => Option[C], made: Int => E) {
+    private val memoE = mutable.HashMap.empty[E, E]
+    private val memoC = mutable.HashMap.empty[C, C]
+    def e(x: E): E = memoE.getOrElseUpdate(x, e0(x))
+    def c(x: C): C = memoC.getOrElseUpdate(x, c0(x))
+    private def e0(x: E): E = x match {
+      case E.Null | E.In | E.Sep => x
+      case E.Reg(r) => regs(r).getOrElse(x)
+      case E.Fld(y, f) => E.Fld(e(y), f)
+      case E.Made => made(-1)
+      case E.MadeAt(i) => made(i)
+      case E.Ite(g, a, b) => E.Ite(c(g), e(a), e(b))
+    }
+    private def c0(x: C): C = x match {
+      case C.True | C.False | C.First => x
+      case C.Not(y) => C.Not(c(y))
+      case C.And(a, b) => C.And(c(a), c(b))
+      case C.Or(a, b) => C.Or(c(a), c(b))
+      case C.IsNull(y) => C.IsNull(e(y))
+      case C.TagIs(y, t) => C.TagIs(e(y), t)
+      case C.SameTag(a, b) => C.SameTag(e(a), e(b))
+      case C.Bit(b) => bits(b).getOrElse(x)
+    }
+    def te(x: TE): TE = x match { case TE.Const(_) => x; case TE.Ite(g, a, b) => TE.Ite(c(g), te(a), te(b)) }
+  }
+
+  /** the sites of a step (a hand-built step with a merged cell is one site) */
+  def sitesOf(step: Step): Vector[(C, Cell)] = if (step.allocs.nonEmpty) { step.allocs } else { step.cell.map(c => (C.True, c)).toVector }
+
+  /** sequential composition: `b` after `a` in the same unit (b reads a's updates; a's sites come first) */
+  def fuse(a: Step, b: Step): Step = {
+    val sa = sitesOf(a)
+    val s = new Subst(a.regs.get, a.bits.get, i => E.MadeAt((if (i < 0) { 0 } else { i }) + sa.size))
+    val regs = a.regs ++ b.regs.map { case (r, x) => r -> s.e(x) }
+    val bits = a.bits ++ b.bits.map { case (x, y) => x -> s.c(y) }
+    val allocs = sa ++ sitesOf(b).map { case (g, cl) => (s.c(g), Cell(s.te(cl.tag), s.e(cl.p1), s.e(cl.p2), s.e(cl.p3), s.e(cl.p4))) }
+    Step(regs, bits, mergeCell(allocs), allocs)
+  }
+
   /** Guarded parallel updates; the first guard that holds wins. */
   final class Prog(phaseBits: Int, subBits: Int, px: String = "", exclusive: Boolean = false) {
     private val regUpd = mutable.HashMap.empty[String, Vector[(C, E)]]
@@ -70,9 +122,17 @@ object Lpm {
     private val bitUpd = mutable.HashMap.empty[String, Vector[(C, C)]]
     private var cellUpd = Vector.empty[(C, Cell)]
     final class Upd(g: C) {
-      def set(r: String, v: E): Unit = { regUpd(r) = regUpd.getOrElse(r, Vector()) :+ ((g, v)) }
-      def bit(b: String, v: C): Unit = { bitUpd(b) = bitUpd.getOrElse(b, Vector()) :+ ((g, v)) }
-      def alloc(tag: TE, p1: E = E.Null, p2: E = E.Null, p3: E = E.Null, p4: E = E.Null): E = { cellUpd = cellUpd :+ ((g, Cell(tag, p1, p2, p3, p4))); E.Made }
+      private var last = -1
+      private def fix: Subst = new Subst(_ => None, _ => None, i => if (i < 0) { require(last >= 0, "Made before any alloc"); E.MadeAt(last) } else { E.MadeAt(i) })
+      def set(r: String, v: E): Unit = { regUpd(r) = regUpd.getOrElse(r, Vector()) :+ ((g, fix.e(v))) }
+      def bit(b: String, v: C): Unit = { bitUpd(b) = bitUpd.getOrElse(b, Vector()) :+ ((g, fix.c(v))) }
+      /** a new allocation site of this unit; returns the pointer to it */
+      def alloc(tag: TE, p1: E = E.Null, p2: E = E.Null, p3: E = E.Null, p4: E = E.Null): E = {
+        val i = cellUpd.size
+        cellUpd = cellUpd :+ ((g, Cell(fix.te(tag), fix.e(p1), fix.e(p2), fix.e(p3), fix.e(p4))))
+        last = i
+        E.MadeAt(i)
+      }
       def alloc(tag: Int, p1: E, p2: E, p3: E, p4: E): E = alloc(TE.Const(tag), p1, p2, p3, p4)
       def phase(k: Int): Unit = { for (i <- 0 until phaseBits) { bit(s"${px}p$i", if (((k >> i) & 1) == 1) { C.True } else { C.False }) }; sub(0) }
       def sub(k: Int): Unit = { for (i <- 0 until subBits) { bit(s"${px}s$i", if (((k >> i) & 1) == 1) { C.True } else { C.False }) } }
@@ -87,13 +147,7 @@ object Lpm {
     def build(regs: Vector[String], bits: Vector[String]): Step = {
       val rs = regs.flatMap { r => regUpd.get(r).map { us => r -> us.foldRight(E.Reg(r): E) { case ((g, v), acc) => E.Ite(g, v, acc) } } }.toMap
       val bs = bits.flatMap { b => bitUpd.get(b).map { us => b -> us.foldRight(C.Bit(b): C) { case ((g, v), acc) => Ite2(g, v, acc) } } }.toMap
-      val cell = if (cellUpd.isEmpty) { None } else {
-        def fold(f: Cell => E): E = cellUpd.foldRight(E.Null: E) { case ((g, c), acc) => E.Ite(g, f(c), acc) }
-        // the default is the last allocation's tag: `Made` is only read when some guard fired, so the fallback is dead
-        def foldTag: TE = cellUpd.init.foldRight(cellUpd.last._2.tag) { case ((g, c), acc) => TE.Ite(g, c.tag, acc) }
-        Some(Cell(foldTag, fold(_.p1), fold(_.p2), fold(_.p3), fold(_.p4)))
-      }
-      Step(rs, bs, cell, cellUpd)
+      Step(rs, bs, mergeCell(cellUpd), cellUpd)
     }
     private def Ite2(g: C, a: C, b: C): C = C.Or(C.And(g, a), C.And(C.Not(g), b))
   }
@@ -110,17 +164,29 @@ object Lpm {
     case TE.Const(k) => k
     case TE.Ite(c, a, b) => if (evalC(c, ctx)) { evalTE(a, ctx) } else { evalTE(b, ctx) }
   }
-  private final case class Ctx(st: State, in: RCell, sep: RCell, made: RCell, first: Boolean)
+  private final case class Ctx(st: State, in: RCell, sep: RCell, made: Vector[RCell], first: Boolean) {
+    val memoE = mutable.HashMap.empty[E, RCell]
+    val memoC = mutable.HashMap.empty[C, Boolean]
+  }
   private def evalE(e: E, ctx: Ctx): RCell = e match {
+    case E.Fld(_, _) | E.Ite(_, _, _) => ctx.memoE.getOrElseUpdate(e, evalE0(e, ctx))
+    case _ => evalE0(e, ctx)
+  }
+  private def evalE0(e: E, ctx: Ctx): RCell = e match {
     case E.Null => null
     case E.Reg(r) => ctx.st.regs.getOrElse(r, null)
     case E.Fld(x, f) => val c = evalE(x, ctx); if (c == null) { null } else { c.fld(f) }
     case E.In => ctx.in
     case E.Sep => ctx.sep
-    case E.Made => ctx.made
+    case E.Made => ctx.made(0)
+    case E.MadeAt(i) => ctx.made(i)
     case E.Ite(c, a, b) => if (evalC(c, ctx)) { evalE(a, ctx) } else { evalE(b, ctx) }
   }
   private def evalC(c: C, ctx: Ctx): Boolean = c match {
+    case C.And(_, _) | C.Or(_, _) | C.Not(_) | C.IsNull(_) | C.TagIs(_, _) | C.SameTag(_, _) => ctx.memoC.getOrElseUpdate(c, evalC0(c, ctx))
+    case _ => evalC0(c, ctx)
+  }
+  private def evalC0(c: C, ctx: Ctx): Boolean = c match {
     case C.True => true
     case C.False => false
     case C.Not(x) => !evalC(x, ctx)
@@ -135,10 +201,12 @@ object Lpm {
 
   /** One unit of `step` over the registers `regs` and bits `bits`. */
   def unitStep(step: Step, regs: Vector[String], bits: Vector[String], st: State, in: RCell, sep: RCell, first: Boolean, layer: Int): State = {
-    val pre = Ctx(st, in, sep, null, first)
-    val made = step.cell.map { cl =>
-      new RCell(evalTE(cl.tag, pre), evalE(cl.p1, pre), evalE(cl.p2, pre), evalE(cl.p3, pre), evalE(cl.p4, pre), layer)
-    }.orNull
+    // the sites are created in order; a site's fields may refer to the earlier sites of the same unit
+    var made = Vector.empty[RCell]
+    for ((_, cl) <- sitesOf(step)) {
+      val pre = Ctx(st, in, sep, made, first)
+      made = made :+ new RCell(evalTE(cl.tag, pre), evalE(cl.p1, pre), evalE(cl.p2, pre), evalE(cl.p3, pre), evalE(cl.p4, pre), layer)
+    }
     val ctx = Ctx(st, in, sep, made, first)
     val rs = regs.map { r => r -> (step.regs.get(r) match { case Some(e) => evalE(e, ctx); case None => st.regs.getOrElse(r, null) }) }.toMap
     val bs = bits.filter { b => step.bits.get(b) match { case Some(c) => evalC(c, ctx); case None => st.bits(b) } }.toSet
@@ -147,15 +215,7 @@ object Lpm {
 
   /** One unit. Returns the new state; `cells` counts allocations. */
   def unit(m: Machine, st: State, in: RCell, sep: RCell, first: Boolean, layer: Int): State = {
-    val pre = Ctx(st, in, sep, null, first)
-    val made = m.step.cell.map { cl =>
-      // the cell's fields are computed from the old state (they may not refer to the cell itself)
-      new RCell(evalTE(cl.tag, pre), evalE(cl.p1, pre), evalE(cl.p2, pre), evalE(cl.p3, pre), evalE(cl.p4, pre), layer)
-    }.orNull
-    val ctx = Ctx(st, in, sep, made, first)
-    val regs = m.regs.map { case (r, _) => r -> (m.step.regs.get(r) match { case Some(e) => evalE(e, ctx); case None => st.regs.getOrElse(r, null) }) }.toMap
-    val bits = m.bits.filter { b => m.step.bits.get(b) match { case Some(c) => evalC(c, ctx); case None => st.bits(b) } }.toSet
-    State(regs, bits)
+    unitStep(m.step, m.regs.map(_._1), m.bits, st, in, sep, first, layer)
   }
 
   final class Run(val outputs: Vector[Boolean], val unitsNeeded: Vector[Int])
@@ -263,7 +323,7 @@ object Lpm {
       case E.Reg(r) => regP(r, t - 1)                   // expressions read the previous layer
       case E.In => P(Here, TrueE, FalseE, _ => FalseE, Set(Inp))
       case E.Sep => P(Here, FalseE, TrueE, _ => FalseE, Set(Inp))
-      case E.Made => P(Here, FalseE, FalseE, l => if (l == t) { TrueE } else { FalseE }, Set(Mach), Some((0 until layerBits).map(k => if (((t >> k) & 1) == 1) { TrueE } else { FalseE }).toVector))
+      case E.Made | E.MadeAt(_) => P(Here, FalseE, FalseE, l => if (l == t) { TrueE } else { FalseE }, Set(Mach), Some((0 until layerBits).map(k => if (((t >> k) & 1) == 1) { TrueE } else { FalseE }).toVector))
       case E.Ite(c, a, b) =>
         val cc = compC(c, t)
         val pa = compE(a, t)

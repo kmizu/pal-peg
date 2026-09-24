@@ -235,7 +235,7 @@ object LpsPal {
 
   // ---- stage matchers ---------------------------------------------------------------------------
 
-  final class Matcher(s: Int) {
+  final class Matcher(val s: Int) {
     val M = new Mod(s"m${s}_", 3, 2, And(Bit(s"alive$s"), not(Bit(s"m${s}_wait"))))
     val T: Tags = mTags(s)
     import M.*
@@ -356,16 +356,33 @@ object LpsPal {
 
   // ---- the machine ----------------------------------------------------------------------------
 
-  def machine(mGroups: Int = 2, fGroups: Int = 3): Lps.Machine = {
+  /** `fusion` 0: one slot per micro-step; 1: each group of a worker (letter step + two back-up steps) is one slot;
+    * 2: additionally the controller's slots and a worker's IN/REQ are fused into the first group */
+  def machine(mGroups: Int = 2, fGroups: Int = 3, fusion: Int = 0): Lps.Machine = {
     val ms = Vector(new Matcher(0), new Matcher(1))
     val regs = ctlRegs ++ ms.flatMap(_.regs) ++ Flags.regs
     val bits = ctlBits ++ ms.flatMap(_.bits) ++ Flags.bits
     val names = regs.map(_._1)
     val slots = Map("CT1" -> ct1.build(names, bits), "CT2" -> ct2.build(names, bits), "CT3" -> ct3.build(names, bits)) ++
       ms.flatMap(_.slots(names, bits)) ++ Flags.slots(names, bits)
-    val schedule = Vector("CT1") ++ ms.flatMap(_.schedule(mGroups)) ++ Flags.schedule(fGroups) ++ Vector("CT2", "CT3")
+    val groups: Vector[Vector[String]] = Vector(Vector("CT1")) ++
+      ms.flatMap(mt => Vector(Vector(s"M${mt.s}IN")) ++ Vector.fill(mGroups)(mt.core.group(s"M${mt.s}"))) ++
+      Vector(Vector("FREQ")) ++ Vector.fill(fGroups)(Vector("FAUX", "FAUX") ++ Flags.core.group("F")) ++ Vector(Vector("CT2"), Vector("CT3"))
     val schema = (mTags :+ fTags).map(_.schema).reduce(_ ++ _)
-    Lps.Machine("ab", regs, bits, Set("out", "f_p3"), "out", schema, schedule, slots)
+    val m = Lps.Machine("ab", regs, bits, Set("out", "f_p3"), "out", schema, groups.flatten, slots)
+    fusion match {
+      case 0 => m
+      case 1 => Lps.fused(m, groups)
+      case _ =>
+        // merge the single-slot groups into their neighbours: CT1+M0IN+group, M1IN+group, FREQ+group, and CT2+CT3 after the last
+        val merged = groups.foldLeft(Vector.empty[Vector[String]]) { (acc, g) =>
+          if (g.size == 1 && g.head != "CT3") { acc :+ g } // a lone slot waits for the next group
+          else if (acc.nonEmpty && acc.last.size == 1 && acc.last.head != "CT3") { acc.init :+ (acc.last ++ g) }
+          else { acc :+ g }
+        }
+        val merged2 = merged.foldLeft(Vector.empty[Vector[String]]) { (acc, g) => if (acc.nonEmpty && acc.last.size == 1) { acc.init :+ (acc.last ++ g) } else { acc :+ g } }
+        Lps.fused(m, merged2)
+    }
   }
 
   def isPal(w: String): Boolean = w == w.reverse

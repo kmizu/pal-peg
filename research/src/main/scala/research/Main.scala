@@ -163,12 +163,14 @@ object Main {
       val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
       val mg = rest.drop(1).headOption.map(_.toInt).getOrElse(1)
       val fg = rest.drop(2).headOption.map(_.toInt).getOrElse(1)
-      println(Lps.checkSim(LpsPal.machine(mg, fg), maxLen).getOrElse(s"ok: slot PAL PEG agrees with the interpreter on all words of length <= $maxLen (mGroups=$mg, fGroups=$fg)"))
+      val fu = rest.drop(3).headOption.map(_.toInt).getOrElse(0)
+      println(Lps.checkSim(LpsPal.machine(mg, fg, fu), maxLen).getOrElse(s"ok: slot PAL PEG agrees with the interpreter on all words of length <= $maxLen (mGroups=$mg, fGroups=$fg, fusion=$fu)"))
     case "lps-pal-sim" :: rest =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(8)
       val mg = rest.drop(1).headOption.map(_.toInt).getOrElse(2)
       val fg = rest.drop(2).headOption.map(_.toInt).getOrElse(3)
-      val m = LpsPal.machine(mg, fg)
+      val fu = rest.drop(3).headOption.map(_.toInt).getOrElse(0)
+      val m = LpsPal.machine(mg, fg, fu)
       val it = Exhaust.words(maxLen, "ab")
       var bad: Option[String] = None
       var count = 0
@@ -204,10 +206,11 @@ object Main {
     case "lps-pal-size" :: rest =>
       val mg = rest.headOption.map(_.toInt).getOrElse(2)
       val fg = rest.drop(1).headOption.map(_.toInt).getOrElse(3)
-      val m = LpsPal.machine(mg, fg)
+      val fu = rest.drop(2).headOption.flatMap(_.toIntOption).getOrElse(0)
+      val m = LpsPal.machine(mg, fg, fu)
       val g = Lps.compile(m)
       val (rules, symbols) = g.size
-      println(s"lps pal: mGroups $mg fGroups $fg budget ${m.budget}, PEG rules=$rules symbols=$symbols")
+      println(s"lps pal: mGroups $mg fGroups $fg fusion $fu budget ${m.budget}, PEG rules=$rules symbols=$symbols")
       val byLayer = g.rules.groupBy { case (n, _) => n.split("_").lift(1).flatMap(_.toIntOption).getOrElse(-1) }
       for (t <- 0 to m.budget) {
         val rs = byLayer.getOrElse(t, Vector())
