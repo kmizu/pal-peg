@@ -60,3 +60,7 @@ Lean の定理が扱うのは自動機械であって、この出力された文
 ```sh
 make test    # lake build（証明と公理監査）、sbt test（生成器）、cargo test（実行器）
 ```
+
+## ライセンス
+
+MIT（[`LICENSE`](LICENSE) を参照）。依存物（Mathlib と Kim–Park の成果物）は Lake が取得するもので、それぞれのライセンスに従う。

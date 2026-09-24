@@ -54,3 +54,7 @@ The Lean theorem is about the automaton, not about this printed grammar. The pro
 ```sh
 make test    # lake build (proof and axiom audit), sbt test (generator), cargo test (runner)
 ```
+
+## License
+
+MIT; see [`LICENSE`](LICENSE). The dependencies (Mathlib and the Kim–Park artifact) are fetched by Lake and keep their own licenses.
