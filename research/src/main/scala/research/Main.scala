@@ -335,6 +335,19 @@ object Main {
       java.nio.file.Files.write(java.nio.file.Paths.get(args.last), r.grammar.render.getBytes("UTF-8"))
       val (n, sz) = r.grammar.size
       println(s"exported ${args.last}: rules=$n symbols=$sz")
+    case "lps-profile" :: which :: rest =>
+      // lps-profile pal3 <m> <f> <word>  |  lps-profile pal3 <m> <f> structured <maxLen>: jobs, units, deadline checks
+      val m = palMachine(s"lps-$which", rest(0).toInt, rest(1).toInt)
+      val words = if (rest(2) == "structured") { LpsProfile.structuredWords(rest(3).toInt) } else { Vector(rest(2)) }
+      var bad = 0
+      var maxUnits = 0
+      for (w <- words) {
+        val pr = LpsProfile.profile(m, w)
+        maxUnits = math.max(maxUnits, pr.maxFlagsUnitsPerTick)
+        if (words.size == 1) { println(pr.table) }
+        if (pr.violations.nonEmpty) { bad += 1; println(s"'${w.take(40)}${if (w.length > 40) "..." else ""}' (${w.length}): " + pr.violations.take(3).mkString("; ")) }
+      }
+      println(s"${words.size} words, $bad with violations, max flags units in one tick $maxUnits")
     case "lps-kmp2" :: rest =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
       val n = rest.drop(1).headOption.map(_.toInt).getOrElse(6)

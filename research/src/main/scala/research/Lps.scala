@@ -61,6 +61,19 @@ object Lps {
     }
   }
 
+  /** run with a callback after every slot: (tick, slot name, state) */
+  def traceSlots(m: Machine, w: String)(f: (Int, String, State) => Unit): Unit = {
+    val regNames = m.regs.map(_._1)
+    var st = State(Map.empty, m.initTrue)
+    var prevSep: RCell = null
+    for (i <- (w.length - 1) to 0 by -1) {
+      val in = new RCell(m.alphabet.indexOf(w.charAt(i)), prevSep, null, null, null, -1)
+      val sep = new RCell(m.alphabet.length, in, null, null, null, -2)
+      for (t <- 1 to m.budget) { st = unitStep(m.slotAt(t), regNames, m.bits, st, in, sep, t == 1, t); f(w.length - i, m.schedule(t - 1), st) }
+      prevSep = sep
+    }
+  }
+
   /** a cell's tag agrees with the declared kinds (input cells: KInp; machine cells: their tag) */
   private def kindOk(m: Machine, c: RCell, kinds: Set[K]): Boolean = c == null || (if (c.tag <= m.alphabet.length) { kinds(KInp) } else { kinds(KTag(c.tag)) })
 
