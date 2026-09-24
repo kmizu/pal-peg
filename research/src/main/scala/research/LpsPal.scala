@@ -173,11 +173,14 @@ object LpsPal {
   def answering(s: Int): C = And(Bit(s"alive$s"), any((2 to 5).map(k => ivIs(s, k))*))
 
   /** the clocks: births, half-window boundaries, intervals, releases; the short-word counter */
-  def ct1: Prog = {
+  /** `gate` enables a stage's birth (default: always); `warm` are the birth-counter bits wb_1, wb_2, … maintained here:
+    * wb_1 is set by the first birth, wb_{i+1} by a birth that finds wb_i set (the birth at tick 2^j sets wb_j) */
+  def ct1(gate: C = True, warm: Vector[String] = Vector()): Prog = {
     val p = new Prog(0, 0, "", exclusive = true)
     val nbNext = prevIn(Reg("nb"))
     val birth = And(Bit("ready"), IsNull(nbNext))
     p.when(True) { u =>
+      for ((wb, i) <- warm.zipWithIndex) { u.bit(wb, Or(Bit(wb), if (i == 0) { birth } else { And(Bit(warm(i - 1)), birth) })) }
       // |w| counter saturating at 4, and the first letter
       for (i <- 0 until 3) { u.bit(s"sm$i", select((0 to 3).map(k => (smIs(k), bitOf(k + 1, i))), Bit(s"sm$i"))) }
       u.bit("first", Ite2(smIs(0), TagIs(In, 1), Bit("first")))
@@ -187,7 +190,7 @@ object LpsPal {
       u.bit("birth", birth)
       u.bit("slot", Ite2(birth, not(Bit("slot")), Bit("slot")))
       for (s <- 0 to 1) {
-        val born = And(birth, if (s == 0) { not(Bit("slot")) } else { Bit("slot") })
+        val born = all(birth, if (s == 0) { not(Bit("slot")) } else { Bit("slot") }, gate)
         val alive = Bit(s"alive$s")
         val clkNext = prevIn(Reg(s"clk$s"))
         val bnd = all(not(born), alive, IsNull(clkNext))
@@ -363,7 +366,7 @@ object LpsPal {
     val regs = ctlRegs ++ ms.flatMap(_.regs) ++ Flags.regs
     val bits = ctlBits ++ ms.flatMap(_.bits) ++ Flags.bits
     val names = regs.map(_._1)
-    val slots = Map("CT1" -> ct1.build(names, bits), "CT2" -> ct2.build(names, bits), "CT3" -> ct3.build(names, bits)) ++
+    val slots = Map("CT1" -> ct1().build(names, bits), "CT2" -> ct2.build(names, bits), "CT3" -> ct3.build(names, bits)) ++
       ms.flatMap(_.slots(names, bits)) ++ Flags.slots(names, bits)
     val groups: Vector[Vector[String]] = Vector(Vector("CT1")) ++
       ms.flatMap(mt => Vector(Vector(s"M${mt.s}IN")) ++ Vector.fill(mGroups)(mt.core.group(s"M${mt.s}"))) ++

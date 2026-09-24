@@ -102,12 +102,16 @@ object LpsPal3 {
     def schedule(k: Int): Vector[String] = Vector("FREQ") ++ Vector.fill(k)("FU")
   }
 
-  def machine(mSteps: Int = 12, fSteps: Int = 40): Lps.Machine = {
+  /** `w0` (a power of two >= 2): no stage of width below w0 is born (plan §3.4 warmup); 2 is the plain machine */
+  def machine(mSteps: Int = 12, fSteps: Int = 40, w0: Int = 2): Lps.Machine = {
+    require(w0 >= 2 && (w0 & (w0 - 1)) == 0, s"w0 must be a power of two >= 2: $w0")
     val ms = Vector(new Matcher(0), new Matcher(1))
+    val warm = LpsWarmup.warmBits(w0)
+    val gate: C = if (warm.isEmpty) { True } else { Bit(warm.last) }
     val regs = ctlRegs ++ ms.flatMap(_.regs) ++ Flags.regs
-    val bits = ctlBits ++ ms.flatMap(_.bits) ++ Flags.bits
+    val bits = ctlBits ++ warm ++ ms.flatMap(_.bits) ++ Flags.bits
     val names = regs.map(_._1)
-    val slots = Map("CT1" -> LpsPal.ct1.build(names, bits), "CT2" -> LpsPal.ct2.build(names, bits), "CT3" -> LpsPal.ct3.build(names, bits)) ++
+    val slots = Map("CT1" -> LpsPal.ct1(gate, warm).build(names, bits), "CT2" -> LpsPal.ct2.build(names, bits), "CT3" -> LpsPal.ct3.build(names, bits)) ++
       ms.flatMap(_.slots(names, bits)) ++ Flags.slots(names, bits)
     val schedule = Vector("CT1") ++ ms.flatMap(_.schedule(mSteps)) ++ Flags.schedule(fSteps) ++ Vector("CT2", "CT3")
     val schema = (mTags :+ fTags).map(_.schema).reduce(_ ++ _)
