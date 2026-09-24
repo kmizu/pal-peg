@@ -110,3 +110,36 @@ pointer's extent; `Prog` branches were not exclusive (first-wins is per register
 the last letter evaluated a phantom tick; shared cell tags made every pointer dispatch over all
 modules' layers; fused expressions are DAGs, so hashes are cached and evaluation, substitution and
 use-counting are memoised.
+
+## 5. Universal local steps (2026-09-24, later)
+
+`LpsKmp2.scala` / `LpsPal2.scala`: every worker is `n` copies per tick of one **universal step**
+`U` that performs exactly one local step in DESIGN's sense (a back-up unit, one archive-reversal
+step, one queue-reversal step, one letter load, or one letter processed with its entry allocated,
+enqueued and compared in the same step), written as one exclusive guard set; each kind of cell has
+one allocation site per `U` (`Prog.site`, fields selected by the guards), so a pointer's site bits
+only say which copy of `U` allocated it. The flags worker's own phases (forward view, chain, skip)
+are further branches of the same step.
+
+| machine | slots/tick | rules | symbols | correctness |
+|---|---|---|---|---|
+| KMP matcher, `U` × 4 | 5 | 1,022 | 18,391 | all words ≤ 8 (interpreter), ≤ 6 (PEG vs oracle) |
+| KMP matcher, `U` × 6 | 7 | 1,735 | 45,363 | all words ≤ 8 |
+| PAL2, matchers 6 / flags 32 | 50 | 22,229 | 1.96M | fails at |w| = 7 (the S = 1 job of size 4 in one tick) |
+| PAL2, matchers 8 / flags 40 | 62 | 30,059 | 3.77M | all words ≤ 10; fails on a 64-letter word (the W = 32 matcher is late) |
+| PAL2, matchers 12 / flags 40 (`out/pal2-m12-f40.peg.gz`) | 70 | 33,019 | 3.98M | all words ≤ 10; 500 random words ≤ 121 and 100 ≤ 513; PEG = oracle ≤ 5; Rust runner correct on samples up to 161 letters |
+
+Cost structure at 12 / 40: a matcher `U` is about 215 rules, a flags `U` about 560, of which about
+310 are site-bit rules: with 40 copies every pointer to a flags cell carries 6 bits and every
+dereference dispatches 40 ways. The flags rate itself is DESIGN's bound (≈ 31 local steps per input for the
+job of size 4S with deadline S, plus the overhead of the S = 1 and S = 2 stages).
+
+What would move the number further:
+
+- the two smallest stages (W = 2, 4) could be replaced by a finite check of |w| < 16 in the
+  controller (seven stored letters compared against fixed-depth history reads), removing the
+  small-S overhead that forces 40 rather than 32 flag steps;
+- fewer dereferences per flags step, or a cheaper encoding of "which copy allocated this cell"
+  than log₂(copies) bit rules per pointer — the dominant term now;
+- a flags job that reuses work across the four jobs of a stage (the table of y_r is a prefix of
+  the table of y_{r+1}; only the matching against y^R restarts), which would cut the rate itself.

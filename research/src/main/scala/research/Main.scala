@@ -165,6 +165,66 @@ object Main {
       val fg = rest.drop(2).headOption.map(_.toInt).getOrElse(1)
       val fu = rest.drop(3).headOption.map(_.toInt).getOrElse(0)
       println(Lps.checkSim(LpsPal.machine(mg, fg, fu), maxLen).getOrElse(s"ok: slot PAL PEG agrees with the interpreter on all words of length <= $maxLen (mGroups=$mg, fGroups=$fg, fusion=$fu)"))
+    case "lps-pal2-sim" :: rest =>
+      val maxLen = rest.headOption.map(_.toInt).getOrElse(8)
+      val ms = rest.drop(1).headOption.map(_.toInt).getOrElse(6)
+      val fs = rest.drop(2).headOption.map(_.toInt).getOrElse(24)
+      val m = LpsPal2.machine(ms, fs)
+      val it = Exhaust.words(maxLen, "ab")
+      var bad: Option[String] = None
+      var count = 0
+      while (bad.isEmpty && it.hasNext) {
+        val w = it.next()
+        count += 1
+        if (w.nonEmpty) {
+          val run = Lps.run(m, w)
+          val want = (1 to w.length).map(k => LpsPal.isPal(w.reverse.take(k)))
+          if (run.outputs != want) { bad = Some(s"'$w': got ${run.outputs.map(b => if (b) "1" else "0").mkString} want ${want.map(b => if (b) "1" else "0").mkString}") }
+        }
+      }
+      println(bad.getOrElse(s"ok: PAL2 (mSteps=$ms, fSteps=$fs, budget=${m.budget}) agrees on all $count words of length <= $maxLen"))
+    case "lps-pal2-rand" :: rest =>
+      val n = rest.headOption.map(_.toInt).getOrElse(200)
+      val len = rest.drop(1).headOption.map(_.toInt).getOrElse(64)
+      val ms = rest.drop(2).headOption.map(_.toInt).getOrElse(6)
+      val fs = rest.drop(3).headOption.map(_.toInt).getOrElse(24)
+      val m = LpsPal2.machine(ms, fs)
+      val rnd = new scala.util.Random(1)
+      var bad: Option[String] = None
+      var i = 0
+      while (bad.isEmpty && i < n) {
+        val base = Vector.fill(1 + rnd.nextInt(len))(if (rnd.nextBoolean()) 'a' else 'b').mkString
+        val w = rnd.nextInt(3) match { case 0 => base; case 1 => base + base.reverse; case _ => base + base.reverse.drop(1) + (if (rnd.nextBoolean()) "a" else "b") }
+        val run = Lps.run(m, w)
+        val want = (1 to w.length).map(k => LpsPal.isPal(w.reverse.take(k)))
+        if (run.outputs != want) { bad = Some(s"'$w': got ${run.outputs.map(b => if (b) "1" else "0").mkString} want ${want.map(b => if (b) "1" else "0").mkString}") }
+        i += 1
+      }
+      println(bad.getOrElse(s"ok: PAL2 (mSteps=$ms, fSteps=$fs) agrees on $n random words of length <= ${2 * len + 1}"))
+    case "lps-pal2-size" :: rest =>
+      val ms = rest.headOption.map(_.toInt).getOrElse(6)
+      val fs = rest.drop(1).headOption.map(_.toInt).getOrElse(24)
+      val m = LpsPal2.machine(ms, fs)
+      val g = Lps.compile(m)
+      val (rules, symbols) = g.size
+      println(s"lps pal2: mSteps $ms fSteps $fs budget ${m.budget}, PEG rules=$rules symbols=$symbols")
+      val byLayer = g.rules.groupBy { case (n, _) => n.split("_").lift(1).flatMap(_.toIntOption).getOrElse(-1) }
+      for (t <- 0 to m.budget) {
+        val rs = byLayer.getOrElse(t, Vector())
+        val sz = rs.map { case (_, e) => Expr.size(e) }.sum
+        println(f"  layer $t%2d ${if (t == 0) "-" else m.schedule(t - 1)}%-7s rules=${rs.size}%4d symbols=$sz%6d")
+      }
+      if (rest.contains("print")) { println(g.render) }
+    case "lps-pal2-peg" :: rest =>
+      val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
+      val ms = rest.drop(1).headOption.map(_.toInt).getOrElse(1)
+      val fs = rest.drop(2).headOption.map(_.toInt).getOrElse(1)
+      println(Lps.checkSim(LpsPal2.machine(ms, fs), maxLen).getOrElse(s"ok: PAL2 PEG agrees with the interpreter on all words of length <= $maxLen (mSteps=$ms, fSteps=$fs)"))
+    case "lps-pal2" :: rest =>
+      val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
+      val ms = rest.drop(1).headOption.map(_.toInt).getOrElse(6)
+      val fs = rest.drop(2).headOption.map(_.toInt).getOrElse(24)
+      println(Lps.check(LpsPal2.machine(ms, fs), maxLen, LpsPal.isPal).getOrElse(s"ok: PAL2 interpreter and PEG agree with the oracle on all words of length <= $maxLen (mSteps=$ms, fSteps=$fs)"))
     case "lps-pal-sim" :: rest =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(8)
       val mg = rest.drop(1).headOption.map(_.toInt).getOrElse(2)
