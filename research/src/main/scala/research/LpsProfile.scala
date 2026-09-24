@@ -83,6 +83,9 @@ object LpsProfile {
         }
       }
       if (slot == "CT3") {
+        // the output itself, against the palindrome oracle (the structured words are then oracle-checked too)
+        val want = LpsPal.isPal(rd.take(t))
+        if (st.bits("out") != want) { violations += s"tick $t: output ${st.bits("out")}, the prefix read so far ${if (want) { "is" } else { "is not" }} a palindrome" }
         // the matcher of an answering stage must report exactly when the text ends with the pattern
         for (s <- 0 to 1 if st.bits(s"alive$s")) {
           val k = ivOf(st, s)
@@ -119,6 +122,33 @@ object LpsProfile {
       val pal = half + (if (n % 2 == 1) "a" else "") + half.reverse
       ws += pal
       if (pal.length >= 2) { val i = pal.length / 3; ws += pal.updated(i, if (pal(i) == 'a') 'b' else 'a') }
+    }
+    ws.result().distinct
+  }
+
+  /** words aimed at the flags interval of a stage of width W (born at tick W, half S = W/2): the machine reads
+    * rd = p ++ y ++ z with |p| = W, |y| = (r+1)S, and y chosen so that its longest palindromic prefix L is
+    * below, at, or above lo = rS, on a chain node or inside a gap (review finding 2) */
+  def flagsIntervalWords(maxLen: Int): Vector[String] = {
+    val rnd = new scala.util.Random(3)
+    def rand(n: Int): String = Vector.fill(n)(if (rnd.nextBoolean()) 'a' else 'b').mkString
+    def pal(n: Int): String = { val h = rand(n / 2); h + (if (n % 2 == 1) "a" else "") + h.reverse }
+    val ws = Vector.newBuilder[String]
+    for (w <- Vector(8, 16, 32); r <- 0 to 3) {
+      val s = w / 2
+      val m = (r + 1) * s
+      val lo = r * s
+      val ys = Vector("a" * m, (0 until m).map(i => if (i % 2 == 0) 'a' else 'b').mkString, pal(m),
+        { val p = pal(m); p.updated(m - 1, if (p(m - 1) == 'a') 'b' else 'a') },
+        pal(lo) + rand(m - lo), pal(math.min(lo + 1, m)) + rand(m - math.min(lo + 1, m)),
+        (if (lo >= 1) { pal(lo - 1) + rand(m - lo + 1) } else { rand(m) }),
+        { val q = pal(math.max(s / 2, 1)); (q * (m / q.length + 1)).take(m) }, rand(m))
+      for (y <- ys) {
+        val p = rand(w)
+        val rd = p + y + rand(math.max(0, 2 * w - w - m + 1))   // reaches interval r + 2 of the stage
+        val word = rd.reverse
+        if (word.length <= maxLen) { ws += word }
+      }
     }
     ws.result().distinct
   }

@@ -113,19 +113,19 @@ object PegOptimize {
         }
         if (cyclic) { None } else { Some(t) }
       }
+      var startBody: Option[Expr] = None   // the start rule takes the body of the end of its alias chain
       for ((n, e) <- rules) e match {
         case Expr.Ref(b) if b != n && table.contains(b) && !alias.contains(n) =>
           endOfChain(n).filter(_ != n).foreach { t =>
-            if (n == start) { alias(t) = n } else { alias(n) = t }
+            if (n == start) { alias(t) = n; startBody = Some(table(t)) } else { alias(n) = t }
             changed = true
           }
         case _ => ()
       }
       if (changed) {
         val kept = rules.filter { case (n, _) => rep(n) == n }
-        val renamedStart = rules.find { case (n, _) => n != start && rep(n) == start }
-        rules = (renamedStart match {
-          case Some((_, e)) => kept.map { case (n, x) => if (n == start) { (n, e) } else { (n, x) } }
+        rules = (startBody match {
+          case Some(e) => kept.map { case (n, x) => if (n == start) { (n, e) } else { (n, x) } }
           case None => kept
         }).map { case (n, e) => (n, norm(subst(e, rep))) }
       }

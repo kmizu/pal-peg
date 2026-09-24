@@ -55,6 +55,26 @@ class PegOptimizeSuite extends munit.FunSuite {
     assert(!r.oldToNew.contains("W"))
   }
 
+  test("a start rule that is an alias of an alias takes the body of the chain's end (review finding 1)") {
+    val g = Grammar.parse("""
+      S = B;
+      B = C;
+      C = "x";
+    """)
+    val r = PegOptimize.compact(g)
+    assertEquivalent(g, r, 3, "xy")
+    assertEquals(r.grammar.table("S"), Lit("x"))
+    val g2 = Grammar.parse("""
+      S = B;
+      D = B;
+      B = "x";
+      T = D "y";
+    """)
+    val r2 = PegOptimize.compact(g2)
+    assertEquivalent(g2, r2, 3, "xy")
+    assertEquals(r2.grammar.table("S"), Lit("x"))
+  }
+
   test("identical right-hand sides are merged, transitively") {
     val g = Grammar.parse("""
       S = A B;
