@@ -348,6 +348,40 @@ object Main {
         if (pr.violations.nonEmpty) { bad += 1; println(s"'${w.take(40)}${if (w.length > 40) "..." else ""}' (${w.length}): " + pr.violations.take(3).mkString("; ")) }
       }
       println(s"${words.size} words, $bad with violations, max flags units in one tick $maxUnits")
+    case "lps-rules" :: which :: rest =>
+      // lps-rules kmp2 <n> <w> <regex> | lps-rules pal3 <m> <f> <w> <regex>: rule values per position ("0" = success, "-" = failure)
+      val (m, w, pat) = which match { case "kmp2" => (LpsKmp2.machine(rest(0).toInt), rest(1), rest(2)); case _ => (palMachine(s"lps-$which", rest(0).toInt, rest(1).toInt), rest(2), rest(3)) }
+      val g = Lps.compile(m)
+      val mt = g.matcher(w)
+      val re = pat.r
+      for ((n, e) <- g.rules if re.findFirstIn(n).isDefined) {
+        val vals = (0 to w.length).map(pos => mt.rule(n, pos).map(x => (x - pos).toString).getOrElse("-")).mkString(" ")
+        println(s"$n = ${Expr.render(e).take(300)}   @[$vals]")
+      }
+    case "lps-trace" :: which :: rest =>
+      // lps-trace kmp2 <n> <w> <regex>: interpreter state after every slot (true bits and non-null registers)
+      val (m, w, pat) = which match { case "kmp2" => (LpsKmp2.machine(rest(0).toInt), rest(1), rest(2)); case _ => (palMachine(s"lps-$which", rest(0).toInt, rest(1).toInt), rest(2), rest(3)) }
+      val re = pat.r
+      Lps.traceSlots(m, w) { (tick, slot, st) =>
+        val bits = st.bits.toVector.sorted.filter(b => re.findFirstIn(b).isDefined).mkString(" ")
+        val regs = st.regs.toVector.sortBy(_._1).filter { case (n, c) => c != null && re.findFirstIn(n).isDefined }.map { case (n, c) => s"$n=t${c.tag}@${c.layer}" }.mkString(" ")
+        println(s"tick $tick $slot: $bits | $regs")
+      }
+    case "lps-check-file" :: path :: rest =>
+      // lps-check-file <path.peg> <maxLen>: re-parse a printed grammar and compare it with the palindrome oracle on all words
+      val maxLen = rest.headOption.map(_.toInt).getOrElse(8)
+      val text = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path)), "UTF-8")
+      val g = Grammar.parse(text)
+      val it = Exhaust.words(maxLen, "ab")
+      var bad: Option[String] = None
+      var count = 0
+      while (bad.isEmpty && it.hasNext) {
+        val w = it.next()
+        count += 1
+        if (g.accepts(w) != LpsPal.isPal(w)) { bad = Some(s"'$w': PEG ${g.accepts(w)}, oracle ${LpsPal.isPal(w)}") }
+      }
+      val (n, sz) = g.size
+      println(bad.getOrElse(s"ok: $path re-parsed (rules=$n symbols=$sz) agrees with the palindrome oracle on all $count words of length <= $maxLen"))
     case "lps-kmp2" :: rest =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
       val n = rest.drop(1).headOption.map(_.toInt).getOrElse(6)

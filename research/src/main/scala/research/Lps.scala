@@ -158,6 +158,22 @@ object Lps {
     private def bitRefs(name: String, ss: Vector[Site]): Vector[Expr] = (0 until nbits(ss.size)).map(k => Ref(bitName(name, k))).toVector
 
     /** A compiled pointer: extent, letter/separator tests, site bits (relative to `sites`), and the static kind set. */
+    /** an ordered choice over the sites of `p`, as a decision trie on its site bits (Task 5): a bit is tested
+      * only where the remaining sites differ on it, and `leaf(site)` is the alternative taken at that site.
+      * Alternatives whose leaf is FAIL are pruned; the bits are read at the pointer's own position. */
+    private def siteTrie(p: P, leaf: Site => Expr): Expr = {
+      val ss = p.sites
+      def go(k: Int, idxs: Vector[Int]): Expr =
+        if (idxs.isEmpty) { FalseE }
+        else if (idxs.size == 1) { leaf(ss(idxs.head)) }
+        else {
+          val (ones, zeros) = idxs.partition(i => ((i >> k) & 1) == 1)
+          if (ones.isEmpty || zeros.isEmpty) { go(k - 1, idxs) }
+          else { or(and(Not(p.bits(k)), go(k - 1, zeros)), and(look(p.bits(k)), go(k - 1, ones))) }
+        }
+      go(nbits(ss.size) - 1, ss.indices.toVector)
+    }
+
     private final case class P(ext: Expr, isLetter: Expr, isSep: Expr, bits: Vector[Expr], kinds: Set[K], inp: Inp) {
       def sites: Vector[Site] = m.sitesOf(kinds)
       def site(x: Site): Expr = {
@@ -173,7 +189,7 @@ object Lps {
         if (ss2 == sites) { copy(kinds = kinds2) }
         else if (kinds2.subsetOf(kinds) && ss2.size <= 1) { P(ext, isLetter, isSep, Vector(), kinds2, inp) }
         else {
-          val bits2 = (0 until nbits(ss2.size)).map { k => or(sites.filter(x => ((ss2.indexOf(x) >> k) & 1) == 1).map(x => site(x))*) }.toVector
+          val bits2 = (0 until nbits(ss2.size)).map { k => siteTrie(this, x => if (((ss2.indexOf(x) >> k) & 1) == 1) { TrueE } else { FalseE }) }.toVector
           P(ext, isLetter, isSep, bits2, kinds2, inp)
         }
       }
@@ -271,21 +287,26 @@ object Lps {
           if (px.inp(Sc)) { alts += ((and(if (both) { look(px.isSep) } else { TrueE }, px.ext), P(Here, TrueE, FalseE, Vector(), Set(KInp), Set(L)))) }
         }
         val pxTags: Set[Int] = px.kinds.collect { case KTag(tag) => tag }
-        for (x @ (l, i) <- px.sites) {
+        // the machine sites: a decision trie on the site bits of x; a site with several possible tags is
+        // narrowed by the cell's tag, read at the cell
+        val siteAlts: Map[Site, (Expr, P)] = px.sites.flatMap { case x @ (l, i) =>
           val tags = m.tagsAt(l, i).toSet
-          if (tags.intersect(pxTags).nonEmpty) {
-            // a site with several possible tags is narrowed by the cell's tag
+          if (tags.intersect(pxTags).isEmpty) { None }
+          else {
             val atCell = if (tags.size == 1) { TrueE } else { or(tags.intersect(pxTags).toVector.sorted.map(tag => tagTest(l, i, tag))*) }
-            alts += ((and(look(px.site(x)), px.ext, look(atCell)), cellFieldP(l, i, f)))
+            Some(x -> ((look(atCell), cellFieldP(l, i, f))))
           }
-        }
-        val kinds: Set[K] = alts.result().flatMap(_._2.kinds).toSet
-        val as = alts.result().map { case (g, fp) => (g, fp.recode(kinds)) }
-        def choose(g: P => Expr): Expr = or(as.map { case (guard, fp) => and(guard, g(fp)) }*)
+        }.toMap
+        val inputAlts = alts.result()
+        val kinds: Set[K] = (inputAlts.map(_._2) ++ siteAlts.values.map(_._2)).flatMap(_.kinds).toSet
+        val as = inputAlts.map { case (g, fp) => (g, fp.recode(kinds)) }
+        val sas = siteAlts.map { case (x, (g, fp)) => x -> ((g, fp.recode(kinds))) }
+        def choose(g: P => Expr): Expr = or((as.map { case (guard, fp) => and(guard, g(fp)) } :+
+          (if (sas.isEmpty) { FalseE } else { siteTrie(px, x => sas.get(x) match { case Some((atCell, fp)) => and(px.ext, atCell, g(fp)); case None => FalseE }) }))*)
         // predicates (letter/separator test, layer bits) must be zero-width: look past the extent of x
         def pred(g: P => Expr): Expr = look(choose(p => look(g(p))))
         val bits = (0 until nbits(m.sitesOf(kinds).size)).map { k => pred(_.bits(k)) }.toVector
-        P(choose(_.ext), pred(_.isLetter), pred(_.isSep), bits, kinds, as.map(_._2.inp).foldLeft(Set.empty[Char])(_ ++ _))
+        P(choose(_.ext), pred(_.isLetter), pred(_.isSep), bits, kinds, (as.map(_._2.inp) ++ sas.values.map(_._2.inp)).foldLeft(Set.empty[Char])(_ ++ _))
     }
 
     /** how often each condition occurs in the slot being compiled (an And/Or is named only when shared) */
@@ -346,7 +367,7 @@ object Lps {
         val p = compE(e, t)
         if (tag < sepTag) { and(look(p.isLetter), look(and(p.ext, Lit(m.alphabet.charAt(tag).toString)))) }
         else if (tag == sepTag) { and(look(p.isSep), look(p.ext)) }
-        else { or(p.sites.map { case x @ (l, i) => and(look(p.site(x)), look(and(p.ext, tagTest(l, i, tag)))) }*) }
+        else { siteTrie(p, { case (l, i) => look(and(p.ext, tagTest(l, i, tag))) }) }
       case C.SameTag(a, b) =>
         val pa = compE(a, t)
         val pb = compE(b, t)
