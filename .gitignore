@@ -1,0 +1,18 @@
+# Lean / Lake
+proof/.lake/
+
+# Scala / sbt
+generator/target/
+generator/project/target/
+generator/project/project/
+.bsp/
+.bloop/
+.metals/
+metals.sbt
+
+# Rust
+runner/target/
+
+# Editors
+.idea/
+.vscode/
