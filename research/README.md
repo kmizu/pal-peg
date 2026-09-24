@@ -3,6 +3,9 @@
 Scaffolding for the search for a *small* ordinary PEG (a few hundred rules) recognizing the binary
 palindromes. Nothing here changes the proof in `../proof`; the grammars here are experiments.
 
+**Current approach and status: [`APPROACH.md`](APPROACH.md)** (the slot-scheduled pointer machines
+`Lps*.scala`, 33,019 rules at 2026-09-24). The measurements in order: [`NOTES.md`](NOTES.md).
+
 ```sh
 sbt test                       # the harness checks itself
 sbt "run sanity"
