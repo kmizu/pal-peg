@@ -2,6 +2,8 @@ package research
 
 /** `run sanity` checks the harness; `run rttm <anbn|marked> [maxLen]` compiles a machine and checks it. */
 object Main {
+  /** the PAL machine of a command family: `lps-pal2-*` → LpsPal2, `lps-pal3-*` → LpsPal3 */
+  def palMachine(cmd: String, m: Int, f: Int): Lps.Machine = if (cmd.contains("pal3")) { LpsPal3.machine(m, f) } else { LpsPal2.machine(m, f) }
   def main(args: Array[String]): Unit = args.toList match {
     case "sanity" :: _ =>
       val anbn = Grammar.parse("S = \"a\" S \"b\" / \"\";")
@@ -165,11 +167,11 @@ object Main {
       val fg = rest.drop(2).headOption.map(_.toInt).getOrElse(1)
       val fu = rest.drop(3).headOption.map(_.toInt).getOrElse(0)
       println(Lps.checkSim(LpsPal.machine(mg, fg, fu), maxLen).getOrElse(s"ok: slot PAL PEG agrees with the interpreter on all words of length <= $maxLen (mGroups=$mg, fGroups=$fg, fusion=$fu)"))
-    case "lps-pal2-sim" :: rest =>
+    case cmd :: rest if cmd == "lps-pal2-sim" || cmd == "lps-pal3-sim" =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(8)
       val ms = rest.drop(1).headOption.map(_.toInt).getOrElse(6)
       val fs = rest.drop(2).headOption.map(_.toInt).getOrElse(24)
-      val m = LpsPal2.machine(ms, fs)
+      val m = palMachine(cmd, ms, fs)
       val it = Exhaust.words(maxLen, "ab")
       var bad: Option[String] = None
       var count = 0
@@ -182,13 +184,13 @@ object Main {
           if (run.outputs != want) { bad = Some(s"'$w': got ${run.outputs.map(b => if (b) "1" else "0").mkString} want ${want.map(b => if (b) "1" else "0").mkString}") }
         }
       }
-      println(bad.getOrElse(s"ok: PAL2 (mSteps=$ms, fSteps=$fs, budget=${m.budget}) agrees on all $count words of length <= $maxLen"))
-    case "lps-pal2-rand" :: rest =>
+      println(bad.getOrElse(s"ok: $cmd (mSteps=$ms, fSteps=$fs, budget=${m.budget}) agrees on all $count words of length <= $maxLen"))
+    case cmd :: rest if cmd == "lps-pal2-rand" || cmd == "lps-pal3-rand" =>
       val n = rest.headOption.map(_.toInt).getOrElse(200)
       val len = rest.drop(1).headOption.map(_.toInt).getOrElse(64)
       val ms = rest.drop(2).headOption.map(_.toInt).getOrElse(6)
       val fs = rest.drop(3).headOption.map(_.toInt).getOrElse(24)
-      val m = LpsPal2.machine(ms, fs)
+      val m = palMachine(cmd, ms, fs)
       val rnd = new scala.util.Random(1)
       var bad: Option[String] = None
       var i = 0
@@ -200,14 +202,14 @@ object Main {
         if (run.outputs != want) { bad = Some(s"'$w': got ${run.outputs.map(b => if (b) "1" else "0").mkString} want ${want.map(b => if (b) "1" else "0").mkString}") }
         i += 1
       }
-      println(bad.getOrElse(s"ok: PAL2 (mSteps=$ms, fSteps=$fs) agrees on $n random words of length <= ${2 * len + 1}"))
-    case "lps-pal2-size" :: rest =>
+      println(bad.getOrElse(s"ok: $cmd (mSteps=$ms, fSteps=$fs) agrees on $n random words of length <= ${2 * len + 1}"))
+    case cmd :: rest if cmd == "lps-pal2-size" || cmd == "lps-pal3-size" =>
       val ms = rest.headOption.map(_.toInt).getOrElse(6)
       val fs = rest.drop(1).headOption.map(_.toInt).getOrElse(24)
-      val m = LpsPal2.machine(ms, fs)
+      val m = palMachine(cmd, ms, fs)
       val g = Lps.compile(m)
       val (rules, symbols) = g.size
-      println(s"lps pal2: mSteps $ms fSteps $fs budget ${m.budget}, PEG rules=$rules symbols=$symbols")
+      println(s"$cmd: mSteps $ms fSteps $fs budget ${m.budget}, PEG rules=$rules symbols=$symbols")
       val byLayer = g.rules.groupBy { case (n, _) => n.split("_").lift(1).flatMap(_.toIntOption).getOrElse(-1) }
       for (t <- 0 to m.budget) {
         val rs = byLayer.getOrElse(t, Vector())
@@ -215,16 +217,16 @@ object Main {
         println(f"  layer $t%2d ${if (t == 0) "-" else m.schedule(t - 1)}%-7s rules=${rs.size}%4d symbols=$sz%6d")
       }
       if (rest.contains("print")) { println(g.render) }
-    case "lps-pal2-peg" :: rest =>
+    case cmd :: rest if cmd == "lps-pal2-peg" || cmd == "lps-pal3-peg" =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
       val ms = rest.drop(1).headOption.map(_.toInt).getOrElse(1)
       val fs = rest.drop(2).headOption.map(_.toInt).getOrElse(1)
-      println(Lps.checkSim(LpsPal2.machine(ms, fs), maxLen).getOrElse(s"ok: PAL2 PEG agrees with the interpreter on all words of length <= $maxLen (mSteps=$ms, fSteps=$fs)"))
-    case "lps-pal2" :: rest =>
+      println(Lps.checkSim(palMachine(cmd, ms, fs), maxLen).getOrElse(s"ok: $cmd PEG agrees with the interpreter on all words of length <= $maxLen (mSteps=$ms, fSteps=$fs)"))
+    case cmd :: rest if cmd == "lps-pal2" || cmd == "lps-pal3" =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
       val ms = rest.drop(1).headOption.map(_.toInt).getOrElse(6)
       val fs = rest.drop(2).headOption.map(_.toInt).getOrElse(24)
-      println(Lps.check(LpsPal2.machine(ms, fs), maxLen, LpsPal.isPal).getOrElse(s"ok: PAL2 interpreter and PEG agree with the oracle on all words of length <= $maxLen (mSteps=$ms, fSteps=$fs)"))
+      println(Lps.check(palMachine(cmd, ms, fs), maxLen, LpsPal.isPal).getOrElse(s"ok: $cmd interpreter and PEG agree with the oracle on all words of length <= $maxLen (mSteps=$ms, fSteps=$fs)"))
     case "lps-pal-sim" :: rest =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(8)
       val mg = rest.drop(1).headOption.map(_.toInt).getOrElse(2)
@@ -283,6 +285,103 @@ object Main {
       val mg = rest.drop(1).headOption.map(_.toInt).getOrElse(2)
       val fg = rest.drop(2).headOption.map(_.toInt).getOrElse(3)
       println(Lps.check(LpsPal.machine(mg, fg), maxLen, LpsPal.isPal).getOrElse(s"ok: slot PAL interpreter and PEG agree with the oracle on all words of length <= $maxLen"))
+    case "lps-metrics" :: which :: rest =>
+      // lps-metrics kmp2 <n> <out.json> | lps-metrics pal2 <m> <f> <out.json>
+      val (m, label, extra) = which match {
+        case "kmp2" => (LpsKmp2.machine(rest(0).toInt), s"kmp2 n=${rest(0)}", Seq("machine_variant" -> "LpsKmp2", "mSteps" -> rest(0), "fSteps" -> "-"))
+        case "pal3" => (LpsPal3.machine(rest(0).toInt, rest(1).toInt), s"pal3 ${rest(0)}/${rest(1)}", Seq("machine_variant" -> "LpsPal3", "mSteps" -> rest(0), "fSteps" -> rest(1)))
+        case _ => (LpsPal2.machine(rest(0).toInt, rest(1).toInt), s"pal2 ${rest(0)}/${rest(1)}", Seq("machine_variant" -> "LpsPal2", "mSteps" -> rest(0), "fSteps" -> rest(1)))
+      }
+      val out = rest.last
+      val t0 = System.nanoTime()
+      val (g, meta) = Lps.compileMeta(m)
+      val gen = (System.nanoTime() - t0) / 1e9
+      val mt = PegMetrics.of(g, n => meta.get(n).map(_.slot).getOrElse(PegMetrics.componentOfName(n)))
+      val commit = scala.sys.process.Process(Seq("git", "rev-parse", "--short", "HEAD")).!!.trim
+      val json = mt.json(extra ++ Seq("source_commit" -> commit, "compiler_variant" -> "Lps", "generation_seconds" -> f"$gen%.2f"))
+      java.nio.file.Files.write(java.nio.file.Paths.get(out), json.getBytes("UTF-8"))
+      println(PegMetrics.markdownHeader)
+      println(mt.markdownRow(label))
+    case "lps-optimize" :: which :: rest =>
+      // lps-optimize kmp2 <n> <out.json> [inline] | lps-optimize pal2 <m> <f> <out.json> [inline]; metrics before/after
+      val inl = rest.contains("inline")
+      val args = rest.filter(_ != "inline")
+      val (m, label, extra) = which match {
+        case "kmp2" => (LpsKmp2.machine(args(0).toInt), s"kmp2 n=${args(0)}", Seq("machine_variant" -> "LpsKmp2", "mSteps" -> args(0), "fSteps" -> "-"))
+        case "pal3" => (LpsPal3.machine(args(0).toInt, args(1).toInt), s"pal3 ${args(0)}/${args(1)}", Seq("machine_variant" -> "LpsPal3", "mSteps" -> args(0), "fSteps" -> args(1)))
+        case _ => (LpsPal2.machine(args(0).toInt, args(1).toInt), s"pal2 ${args(0)}/${args(1)}", Seq("machine_variant" -> "LpsPal2", "mSteps" -> args(0), "fSteps" -> args(1)))
+      }
+      val out = args.last
+      val (g, meta) = Lps.compileMeta(m)
+      val comp = (n: String) => meta.get(n).map(_.slot).getOrElse(PegMetrics.componentOfName(n))
+      val before = PegMetrics.of(g, comp)
+      val t0 = System.nanoTime()
+      val r = PegOptimize.compact(g, PegOptimize.Options(inlineSingleUse = inl))
+      val secs = (System.nanoTime() - t0) / 1e9
+      val after = PegMetrics.of(r.grammar, comp)
+      val commit = scala.sys.process.Process(Seq("git", "rev-parse", "--short", "HEAD")).!!.trim
+      val json = after.json(extra ++ Seq("source_commit" -> commit, "compiler_variant" -> (if (inl) { "Lps+compact+inline" } else { "Lps+compact" }),
+        "N_raw" -> before.rules.toString, "rhs_nodes_raw" -> before.rhsNodes.toString, "optimize_seconds" -> f"$secs%.2f"))
+      java.nio.file.Files.write(java.nio.file.Paths.get(out), json.getBytes("UTF-8"))
+      println(PegMetrics.markdownHeader)
+      println(before.markdownRow(label + " raw"))
+      println(after.markdownRow(label + (if (inl) { " compact+inline" } else { " compact" })))
+    case "lps-export" :: which :: rest =>
+      // lps-export kmp2 <n> <path> [inline] | lps-export pal2 <m> <f> <path> [inline]: the compacted grammar, to a file
+      val inl = rest.contains("inline")
+      val args = rest.filter(_ != "inline")
+      val m = which match { case "kmp2" => LpsKmp2.machine(args(0).toInt); case "pal3" => LpsPal3.machine(args(0).toInt, args(1).toInt); case _ => LpsPal2.machine(args(0).toInt, args(1).toInt) }
+      val r = PegOptimize.compact(Lps.compile(m), PegOptimize.Options(inlineSingleUse = inl))
+      java.nio.file.Files.write(java.nio.file.Paths.get(args.last), r.grammar.render.getBytes("UTF-8"))
+      val (n, sz) = r.grammar.size
+      println(s"exported ${args.last}: rules=$n symbols=$sz")
+    case "lps-profile" :: which :: rest =>
+      // lps-profile pal3 <m> <f> <word>  |  lps-profile pal3 <m> <f> structured <maxLen>: jobs, units, deadline checks
+      val m = palMachine(s"lps-$which", rest(0).toInt, rest(1).toInt)
+      val words = if (rest(2) == "structured") { LpsProfile.structuredWords(rest(3).toInt) } else { Vector(rest(2)) }
+      var bad = 0
+      var maxUnits = 0
+      for (w <- words) {
+        val pr = LpsProfile.profile(m, w)
+        maxUnits = math.max(maxUnits, pr.maxFlagsUnitsPerTick)
+        if (words.size == 1) { println(pr.table) }
+        if (pr.violations.nonEmpty) { bad += 1; println(s"'${w.take(40)}${if (w.length > 40) "..." else ""}' (${w.length}): " + pr.violations.take(3).mkString("; ")) }
+      }
+      println(s"${words.size} words, $bad with violations, max flags units in one tick $maxUnits")
+    case "lps-rules" :: which :: rest =>
+      // lps-rules kmp2 <n> <w> <regex> | lps-rules pal3 <m> <f> <w> <regex>: rule values per position ("0" = success, "-" = failure)
+      val (m, w, pat) = which match { case "kmp2" => (LpsKmp2.machine(rest(0).toInt), rest(1), rest(2)); case _ => (palMachine(s"lps-$which", rest(0).toInt, rest(1).toInt), rest(2), rest(3)) }
+      val g = Lps.compile(m)
+      val mt = g.matcher(w)
+      val re = pat.r
+      for ((n, e) <- g.rules if re.findFirstIn(n).isDefined) {
+        val vals = (0 to w.length).map(pos => mt.rule(n, pos).map(x => (x - pos).toString).getOrElse("-")).mkString(" ")
+        println(s"$n = ${Expr.render(e).take(300)}   @[$vals]")
+      }
+    case "lps-trace" :: which :: rest =>
+      // lps-trace kmp2 <n> <w> <regex>: interpreter state after every slot (true bits and non-null registers)
+      val (m, w, pat) = which match { case "kmp2" => (LpsKmp2.machine(rest(0).toInt), rest(1), rest(2)); case _ => (palMachine(s"lps-$which", rest(0).toInt, rest(1).toInt), rest(2), rest(3)) }
+      val re = pat.r
+      Lps.traceSlots(m, w) { (tick, slot, st) =>
+        val bits = st.bits.toVector.sorted.filter(b => re.findFirstIn(b).isDefined).mkString(" ")
+        val regs = st.regs.toVector.sortBy(_._1).filter { case (n, c) => c != null && re.findFirstIn(n).isDefined }.map { case (n, c) => s"$n=t${c.tag}@${c.layer}" }.mkString(" ")
+        println(s"tick $tick $slot: $bits | $regs")
+      }
+    case "lps-check-file" :: path :: rest =>
+      // lps-check-file <path.peg> <maxLen>: re-parse a printed grammar and compare it with the palindrome oracle on all words
+      val maxLen = rest.headOption.map(_.toInt).getOrElse(8)
+      val text = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path)), "UTF-8")
+      val g = Grammar.parse(text)
+      val it = Exhaust.words(maxLen, "ab")
+      var bad: Option[String] = None
+      var count = 0
+      while (bad.isEmpty && it.hasNext) {
+        val w = it.next()
+        count += 1
+        if (g.accepts(w) != LpsPal.isPal(w)) { bad = Some(s"'$w': PEG ${g.accepts(w)}, oracle ${LpsPal.isPal(w)}") }
+      }
+      val (n, sz) = g.size
+      println(bad.getOrElse(s"ok: $path re-parsed (rules=$n symbols=$sz) agrees with the palindrome oracle on all $count words of length <= $maxLen"))
     case "lps-kmp2" :: rest =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
       val n = rest.drop(1).headOption.map(_.toInt).getOrElse(6)

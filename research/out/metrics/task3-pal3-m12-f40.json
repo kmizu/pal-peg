@@ -1,0 +1,18 @@
+{
+  "machine_variant": "LpsPal3",
+  "mSteps": "12",
+  "fSteps": "40",
+  "source_commit": "872168d",
+  "compiler_variant": "Lps+compact",
+  "N_raw": "31227",
+  "rhs_nodes_raw": "3656828",
+  "optimize_seconds": "12.77",
+  "N": 27550,
+  "rhs_nodes": 3614066,
+  "max_rhs_nodes": 1222,
+  "rendered_utf8_bytes": 22280023,
+  "distinct_rhs_dag_nodes": 305446,
+  "dispatch_arm_count": 393622,
+  "N_by_component": {"-": 327, "CT1": 67, "CT2": 214, "CT3": 2, "FREQ": 14, "FU": 20401, "M0IN": 71, "M0U": 3192, "M1IN": 70, "M1U": 3192},
+  "rhs_nodes_by_component": {"-": 1912, "CT1": 583, "CT2": 116237, "CT3": 95, "FREQ": 104, "FU": 3138163, "M0IN": 409, "M0U": 178078, "M1IN": 407, "M1U": 178078}
+}

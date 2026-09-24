@@ -1,0 +1,16 @@
+{
+  "machine_variant": "LpsKmp2",
+  "mSteps": "4",
+  "fSteps": "-",
+  "source_commit": "3edb32f",
+  "compiler_variant": "Lps",
+  "generation_seconds": "1.03",
+  "N": 1022,
+  "rhs_nodes": 21282,
+  "max_rhs_nodes": 141,
+  "rendered_utf8_bytes": 103625,
+  "distinct_rhs_dag_nodes": 5261,
+  "dispatch_arm_count": 2725,
+  "N_by_component": {"-": 49, "IN": 37, "U": 936},
+  "rhs_nodes_by_component": {"-": 283, "IN": 128, "U": 20871}
+}

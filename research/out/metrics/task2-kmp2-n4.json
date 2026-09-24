@@ -1,0 +1,18 @@
+{
+  "machine_variant": "LpsKmp2",
+  "mSteps": "4",
+  "fSteps": "-",
+  "source_commit": "9542d06",
+  "compiler_variant": "Lps+compact",
+  "N_raw": "998",
+  "rhs_nodes_raw": "20129",
+  "optimize_seconds": "0.50",
+  "N": 865,
+  "rhs_nodes": 19247,
+  "max_rhs_nodes": 141,
+  "rendered_utf8_bytes": 92416,
+  "distinct_rhs_dag_nodes": 4803,
+  "dispatch_arm_count": 2481,
+  "N_by_component": {"-": 44, "IN": 21, "U": 800},
+  "rhs_nodes_by_component": {"-": 254, "IN": 106, "U": 18887}
+}
