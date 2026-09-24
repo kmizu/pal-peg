@@ -191,13 +191,22 @@ object Lps {
         val i = e match { case MadeAt(j) => j; case _ => 0 }
         val kinds: Set[K] = m.tagsAt(t, i).map(KTag.apply).toSet
         P(Here, FalseE, FalseE, constBits(m.sitesOf(kinds), (t, i)), kinds)
-      case Ite(c, a, b) =>
-        val cc = compC(c, t)
-        val kinds = compE(a, t).kinds ++ compE(b, t).kinds
-        val pa = compE(a, t).recode(kinds)
-        val pb = compE(b, t).recode(kinds)
-        def sel(fa: Expr, fb: Expr): Expr = or(and(look(cc), fa), and(Not(cc), fb))
-        P(sel(pa.ext, pb.ext), sel(pa.isLetter, pb.isLetter), sel(pa.isSep, pb.isSep), (0 until nbits(m.sitesOf(kinds).size)).map(k => sel(pa.bits(k), pb.bits(k))).toVector, kinds)
+      case Ite(_, _, _) =>
+        // a chain of conditionals is one ordered choice: the first condition that holds selects its value
+        val cases = Vector.newBuilder[(Expr, P)]
+        var cur: E = e
+        var go = true
+        while (go) cur match {
+          case Ite(c, a, b) => cases += ((compC(c, t), compE(a, t))); cur = b
+          case _ => go = false
+        }
+        val cs = cases.result()
+        val pd = compE(cur, t)
+        val kinds = cs.map(_._2.kinds).foldLeft(pd.kinds)(_ ++ _)
+        val rs = cs.map { case (g, pa) => (g, pa.recode(kinds)) }
+        val pdr = pd.recode(kinds)
+        def sel(f: P => Expr): Expr = or((rs.map { case (g, pa) => and(look(g), f(pa)) } :+ and(and(rs.map { case (g, _) => Not(g) }*), f(pdr)))*)
+        P(sel(_.ext), sel(_.isLetter), sel(_.isSep), (0 until nbits(m.sitesOf(kinds).size)).map(k => sel(_.bits(k))).toVector, kinds)
       case Fld(x, f) =>
         val px = compE(x, t)
         val alts = Vector.newBuilder[(Expr, P)]
@@ -296,7 +305,22 @@ object Lps {
       case TE.Ite(c, a, b) => val cc = compC(c, t); or(and(look(cc), compTE(a, t, i, k)), and(Not(cc), compTE(b, t, i, k)))
     }
 
-    private def emitPointer(name: String, p0: P, kinds: Set[K]): Unit = {
+    /** a register/field rule: the top-level dereference or conditional is emitted under the rule's own name
+      * (not as a separate named `X`), and later uses of the same expression alias to it */
+    private def emitPointer(name: String, e: E, t: Int, kinds: Set[K]): Unit = {
+      val p0 = e match {
+        case Fld(_, _) | Ite(_, _, _) if !memoE.contains((e, t)) => compE0(e, t)
+        case _ => compE(e, t)
+      }
+      emitPointerP(name, p0, kinds)
+      e match {
+        case Fld(_, _) | Ite(_, _, _) if !memoE.contains((e, t)) =>
+          val ss = m.sitesOf(kinds)
+          memoE((e, t)) = P(Ref(name), if (kinds(KInp)) { Ref(s"${name}_kL") } else { FalseE }, if (kinds(KInp)) { Not(Ref(s"${name}_kL")) } else { FalseE }, bitRefs(name, ss), kinds)
+        case _ => ()
+      }
+    }
+    private def emitPointerP(name: String, p0: P, kinds: Set[K]): Unit = {
       // the static kinds of the value may be wider than the declared kinds (e.g. `Made` in a slot that allocates
       // several tags); the declaration is trusted, and layers outside it are dropped by the recoding
       val p = p0.recode(kinds)
@@ -328,10 +352,10 @@ object Lps {
           for (k <- 0 until nbits(m.tagsAt(t, i).size)) { rules += ((s"C_${t}_${i}_g$k", compTE(cl.tag, t, i, k))) }
           for (f <- 1 to 4; kinds = fieldKindsAt(t, i, f) if kinds.nonEmpty) {
             val src: E = f match { case 1 => cl.p1; case 2 => cl.p2; case 3 => cl.p3; case _ => cl.p4 }
-            emitPointer(fieldName(t, i, f), compE(src, t), kinds)
+            emitPointer(fieldName(t, i, f), src, t, kinds)
           }
         }
-        for ((r, kinds) <- m.regs) { step.regs.get(r).foreach { e => emitPointer(s"${r}_$t", compE(e, t), kinds) } }
+        for ((r, kinds) <- m.regs) { step.regs.get(r).foreach { e => emitPointer(s"${r}_$t", e, t, kinds) } }
         for (b <- m.bits) { step.bits.get(b).foreach { c => rules += ((s"${b}_$t", compC(c, t))) } }
       }
       new Grammar(rules.result())

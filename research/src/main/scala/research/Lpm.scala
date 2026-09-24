@@ -139,6 +139,12 @@ object Lpm {
     }
     /** the guard wins per register/bit: the first `when` in order that holds and updates it. With `exclusive`,
       * every guard is conjoined with the negation of all earlier guards, so at most one branch acts. */
+    /** an unconditional allocation site shared by the branches (its fields select by the branch guards) */
+    def site(tag: TE, p1: E = E.Null, p2: E = E.Null, p3: E = E.Null, p4: E = E.Null): E = {
+      val i = cellUpd.size
+      cellUpd = cellUpd :+ ((C.True, Cell(tag, p1, p2, p3, p4)))
+      E.MadeAt(i)
+    }
     def when(g: C)(f: Upd => Unit): Unit = {
       val g2 = if (exclusive && seen.nonEmpty) { C.all((seen.map(C.Not.apply) :+ g)*) } else { g }
       seen = seen :+ g

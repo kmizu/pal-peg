@@ -223,6 +223,34 @@ object Main {
       val mg = rest.drop(1).headOption.map(_.toInt).getOrElse(2)
       val fg = rest.drop(2).headOption.map(_.toInt).getOrElse(3)
       println(Lps.check(LpsPal.machine(mg, fg), maxLen, LpsPal.isPal).getOrElse(s"ok: slot PAL interpreter and PEG agree with the oracle on all words of length <= $maxLen"))
+    case "lps-kmp2" :: rest =>
+      val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
+      val n = rest.drop(1).headOption.map(_.toInt).getOrElse(6)
+      println(Lps.check(LpsKmp2.machine(n), maxLen, LpsKmp2.oracle).getOrElse(s"ok: universal-step KMP (n=$n): interpreter and PEG agree with the oracle on all words of length <= $maxLen"))
+    case "lps-kmp2-sim" :: rest =>
+      val maxLen = rest.headOption.map(_.toInt).getOrElse(8)
+      val n = rest.drop(1).headOption.map(_.toInt).getOrElse(6)
+      val m = LpsKmp2.machine(n)
+      val it = Exhaust.words(maxLen, "ab#")
+      var bad: Option[String] = None
+      var count = 0
+      while (bad.isEmpty && it.hasNext) {
+        val w = it.next()
+        count += 1
+        if (w.nonEmpty) {
+          val run = Lps.run(m, w)
+          val rd = w.reverse
+          val want = (1 to w.length).map(k => LpsKmp2.oracle(rd.take(k).reverse))
+          if (run.outputs != want) { bad = Some(s"'$w' (reading $rd): got ${run.outputs.map(b => if (b) "1" else "0").mkString} want ${want.map(b => if (b) "1" else "0").mkString}") }
+        }
+      }
+      println(bad.getOrElse(s"ok: universal-step KMP (n=$n, budget=${m.budget}) agrees on all $count words of length <= $maxLen"))
+    case "lps-kmp2-size" :: rest =>
+      val n = rest.headOption.map(_.toInt).getOrElse(6)
+      val g = Lps.compile(LpsKmp2.machine(n))
+      val (rules, symbols) = g.size
+      println(s"lps kmp2: n $n, PEG rules=$rules symbols=$symbols")
+      if (rest.contains("print")) { println(g.render) }
     case "lps-kmp-eval" :: w :: pairsS :: file :: Nil =>
       val exprs = scala.io.Source.fromFile(file).getLines().map(_.trim).filter(_.nonEmpty).toList
       val g = Lps.compile(LpsKmp.machine(pairsS.toInt))
