@@ -145,6 +145,11 @@ object Main {
         }
       }
       println(bad.getOrElse(s"ok: interpreter agrees on all $count words of length <= $maxLen; max units per tick = $worst"))
+    case "lpm-slisenko-size" :: rest =>
+      val budget = rest.headOption.map(_.toInt).getOrElse(32)
+      val g = Lpm.compile(LpmSlisenko.machine, budget)
+      val (rules, symbols) = g.size
+      println(s"lpm slisenko: budget $budget, PEG rules=$rules symbols=$symbols (per layer: rules=${rules / budget} symbols=${symbols / budget})")
     case "lpm-slisenko" :: rest =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
       val budget = rest.drop(1).headOption.map(_.toInt).getOrElse(64)

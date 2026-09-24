@@ -163,11 +163,14 @@ object Lpm {
     private def bitName(x: String, k: Int) = s"${x}_y$k"
 
     /** A compiled pointer: its extent and the kind information. */
-    private final case class P(ext: Expr, isLetter: Expr, isSep: Expr, layer: Int => Expr, kinds: Set[Kind])
+    private final case class P(ext: Expr, isLetter: Expr, isSep: Expr, layer: Int => Expr, kinds: Set[Kind], bits: Option[Vector[Expr]] = None) {
+      /** bit k of the layer index, as an expression */
+      def bitRef(k: Int): Expr = bits.map(_(k)).getOrElse(FalseE)
+    }
 
     private def regP(r: String, t: Int): P = kindOf(r) match {
       case Inp => P(Ref(s"${r}_$t"), Ref(s"${r}_${t}_kL"), Not(Ref(s"${r}_${t}_kL")), _ => FalseE, Set(Inp))
-      case Mach => P(Ref(s"${r}_$t"), FalseE, FalseE, l => layerTest(s"${r}_$t", l), Set(Mach))
+      case Mach => P(Ref(s"${r}_$t"), FalseE, FalseE, l => layerTest(s"${r}_$t", l), Set(Mach), Some((0 until layerBits).map(k => Ref(bitName(s"${r}_$t", k))).toVector))
     }
     private def layerTest(x: String, l: Int): Expr =
       and((0 until layerBits).map { k => if (((l >> k) & 1) == 1) { Ref(bitName(x, k)) } else { Not(Ref(bitName(x, k))) } }*)
@@ -175,7 +178,7 @@ object Lpm {
     private def fieldOfCell(t: Int, f: Int): P =
       f match {
         case 1 => P(Ref(s"C_${t}_p1"), Ref(s"C_${t}_p1_kL"), Not(Ref(s"C_${t}_p1_kL")), _ => FalseE, Set(Inp))
-        case _ => P(Ref(s"C_${t}_p$f"), FalseE, FalseE, l => layerTest(s"C_${t}_p$f", l), Set(Mach))
+        case _ => P(Ref(s"C_${t}_p$f"), FalseE, FalseE, l => layerTest(s"C_${t}_p$f", l), Set(Mach), Some((0 until layerBits).map(k => Ref(bitName(s"C_${t}_p$f", k))).toVector))
       }
 
     /** Emit the pointer as auxiliary rules and return references to them (sharing). */
@@ -188,15 +191,15 @@ object Lpm {
       if (hasInp) { rules += ((s"${x}_kL", p.isLetter)) }
       if (hasMach) {
         for (k <- 0 until layerBits) {
-          val ls = (1 to budget).filter { l => ((l >> k) & 1) == 1 }
-          rules += ((bitName(x, k), or(ls.map(p.layer)*)))
+          rules += ((bitName(x, k), p.bits.map(_(k)).getOrElse { val ls = (1 to budget).filter { l => ((l >> k) & 1) == 1 }; or(ls.map(p.layer)*) }))
         }
       }
       P(Ref(x),
         if (hasInp) { Ref(s"${x}_kL") } else { FalseE },
         if (hasInp) { Not(Ref(s"${x}_kL")) } else { FalseE },
         l => if (hasMach) { layerTest(x, l) } else { FalseE },
-        p.kinds)
+        p.kinds,
+        if (hasMach) { Some((0 until layerBits).map(k => Ref(bitName(x, k))).toVector) } else { None })
     }
 
     private def compE(e: E, t: Int): P = e match {
@@ -209,16 +212,17 @@ object Lpm {
       case E.Reg(r) => regP(r, t - 1)                   // expressions read the previous layer
       case E.In => P(Here, TrueE, FalseE, _ => FalseE, Set(Inp))
       case E.Sep => P(Here, FalseE, TrueE, _ => FalseE, Set(Inp))
-      case E.Made => P(Here, FalseE, FalseE, l => if (l == t) { TrueE } else { FalseE }, Set(Mach))
+      case E.Made => P(Here, FalseE, FalseE, l => if (l == t) { TrueE } else { FalseE }, Set(Mach), Some((0 until layerBits).map(k => if (((t >> k) & 1) == 1) { TrueE } else { FalseE }).toVector))
       case E.Ite(c, a, b) =>
         val cc = compC(c, t)
         val pa = compE(a, t)
         val pb = compE(b, t)
         def sel(fa: Expr, fb: Expr): Expr = or(and(look(cc), fa), and(Not(cc), fb))
-        P(sel(pa.ext, pb.ext), sel(pa.isLetter, pb.isLetter), sel(pa.isSep, pb.isSep), l => sel(pa.layer(l), pb.layer(l)), pa.kinds ++ pb.kinds)
+        P(sel(pa.ext, pb.ext), sel(pa.isLetter, pb.isLetter), sel(pa.isSep, pb.isSep), l => sel(pa.layer(l), pb.layer(l)), pa.kinds ++ pb.kinds,
+          Some((0 until layerBits).map(k => sel(pa.bitRef(k), pb.bitRef(k))).toVector))
       case E.Fld(x, f) =>
         val px = compE(x, t)
-        // alternatives by the kind of x
+        // alternatives by the kind of x; every component of the result dispatches once on x's kind
         val alts = Vector.newBuilder[(Expr, P)]   // (guard on x, field pointer relative to x's node)
         if (px.kinds(Inp) && f == 1) {
           alts += ((px.isLetter, P(and(AnyChar, Here), FalseE, TrueE, _ => FalseE, Set(Inp))))   // prev of a letter: the separator of the older node
@@ -228,7 +232,13 @@ object Lpm {
         val as = alts.result()
         def choose(g: P => Expr): Expr = or(as.map { case (guard, fp) => and(look(guard), px.ext, g(fp)) }*)
         val kinds: Set[Kind] = as.flatMap(_._2.kinds).toSet
-        P(choose(_.ext), choose(p => look(p.isLetter)), choose(p => look(p.isSep)), l => choose(p => look(p.layer(l))), kinds)
+        // the layer bits of the result: bit k holds iff the field's bit k holds at the target (one dispatch per bit)
+        val bitExprs: Vector[Expr] = (0 until layerBits).map { k =>
+          or(as.map { case (guard, fp) => and(look(guard), px.ext, look(fp.bitRef(k))) }*)
+        }.toVector
+        P(choose(_.ext), choose(p => look(p.isLetter)), choose(p => look(p.isSep)),
+          l => and((0 until layerBits).map { k => if (((l >> k) & 1) == 1) { bitExprs(k) } else { Not(bitExprs(k)) } }*),
+          kinds, Some(bitExprs))
     }
 
     private def compC(c: C, t: Int): Expr = c match {
@@ -273,8 +283,7 @@ object Lpm {
         case Mach =>
           // layer bits: bit k of the layer that allocated the target
           for (k <- 0 until layerBits) {
-            val ls = (1 to budget).filter { l => ((l >> k) & 1) == 1 }
-            rules += ((bitName(name, k), or(ls.map(p.layer)*)))
+            rules += ((bitName(name, k), p.bits.map(_(k)).getOrElse { val ls = (1 to budget).filter { l => ((l >> k) & 1) == 1 }; or(ls.map(p.layer)*) }))
           }
       }
     }
