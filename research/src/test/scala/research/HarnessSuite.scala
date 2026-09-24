@@ -41,4 +41,16 @@ class HarnessSuite extends munit.FunSuite {
   test("Slisenko's recursion finds exactly the centres of the initial palindromes") {
     assertEquals(Slisenko.check(10), None)
   }
+
+  test("the real-time head machine certifies every initial palindrome on time at a bounded speed") {
+    val it = Exhaust.words(11)
+    var worst = 0
+    while (it.hasNext) {
+      val w = it.next()
+      val s = SlisenkoRT.minSpeed(w)
+      assert(s.isDefined, s"machine fails on '$w'")
+      worst = math.max(worst, s.get)
+    }
+    assert(worst <= 32, s"worst speed $worst")
+  }
 }

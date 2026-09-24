@@ -28,6 +28,28 @@ object Main {
     case "slisenko" :: rest =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(10)
       Slisenko.check(maxLen)
+    case "psm" :: rest =>
+      val budget = rest.headOption.map(_.toInt).getOrElse(8)
+      val prog = Psm.markedPal
+      def oracle(w: String): Boolean = w.count(_ == '#') == 1 && Exhaust.isPal(w)
+      val bad = Exhaust.words(8, "ab#").find { w =>
+        val t = Psm.run(prog, w, budget)
+        (w.nonEmpty && t.outputs.last) != oracle(w)
+      }
+      println(bad.map(w => s"psm markedPal mismatch on '$w'").getOrElse("ok: psm markedPal agrees on all words of length <= 8"))
+    case "slisenko-rt" :: rest =>
+      SlisenkoRT.report(rest.headOption.map(_.toInt).getOrElse(10))
+    case "slisenko-rt-one" :: w :: rest =>
+      val speed = rest.headOption.map(_.toInt).getOrElse(1 << 20)
+      println(SlisenkoRT.run(w, speed, verbose = rest.contains("v")).getOrElse(s"ok at speed $speed; min speed = ${SlisenkoRT.minSpeed(w)}"))
+    case "slisenko-stress" :: rest =>
+      SlisenkoRT.stress(rest.headOption.map(_.toInt).getOrElse(2000), rest.drop(1).headOption.map(_.toInt).getOrElse(3))
+    case "slisenko-profile" :: w :: _ =>
+      SlisenkoRT.profile(w)
+    case "slisenko-trace" :: w :: _ =>
+      println(Slisenko.trace(w).map(_.fold(_.toString, l => s"L(${l.first},+${l.step}x${l.count})")).mkString(" "))
+    case "slisenko-cost" :: rest =>
+      Slisenko.costReport(rest.headOption.map(_.toInt).getOrElse(12))
     case _ =>
       println("usage: run sanity | run rttm <anbn|marked> [maxLen] [print] | run slisenko [maxLen]")
   }

@@ -131,6 +131,81 @@ object Slisenko {
     }.toSet
   }
 
+  /** Work of the direct machine on `w`, in elementary head moves.
+    *
+    * For a point value x: the region search (2·R(x)) and the Fischer–Paterson pass over
+    * `X * X` for the region X = ω[x⁻..x⁺] (one step per symbol plus one per failure-link
+    * iteration, as in the algorithm's case 3). For a lattice: the extension sweep over its region.
+    */
+  final case class Cost(regions: Long, fp: Long, fpIterations: Long, lattices: Long, values: Int) {
+    def total: Long = regions + fp + lattices
+  }
+
+  def cost(w: String): Cost = {
+    val word = new Word(w)
+    var regions = 0L
+    var fp = 0L
+    var fpIter = 0L
+    var lattices = 0L
+    val values = trace(w)
+    for (v <- values) v match {
+      case Left(x) if word.valid(x) =>
+        regions += 2L * word.R(x)
+        // Fischer–Paterson on Z = X * X, X = ω[x⁻..x⁺]
+        val xs = (word.left(x) to word.right(x)).map(word.omega).toVector
+        val z = xs ++ Vector('*') ++ xs
+        val fail = new Array[Int](z.length + 1)   // KMP failure function of z (1-indexed lengths)
+        fail(0) = 0
+        if (z.nonEmpty) { fail(1) = 0 }
+        var i = 1
+        while (i < z.length) {
+          var k = fail(i)
+          fp += 1
+          while (k > 0 && z(k) != z(i)) { k = fail(k); fp += 1; fpIter += 1 }
+          fail(i + 1) = if (z(k) == z(i)) { k + 1 } else { 0 }
+          i += 1
+        }
+      case Left(_) => ()
+      case Right(l) => lattices += 2L * (word.right(l) - word.left(l) + 1)
+    }
+    Cost(regions, fp, fpIter, lattices, values.size)
+  }
+
+  private def fibonacciWord(n: Int): String = {
+    var a = "a"
+    var b = "ab"
+    while (b.length < n) { val c = b + a; a = b; b = c }
+    b.take(n)
+  }
+
+  private def zimin(k: Int): String = if (k == 0) { "a" } else { val z = zimin(k - 1); z + ("ab".charAt(k % 2)).toString + z }
+
+  /** Maximum of total work / |W| over exhaustive short words and structured or random long words. */
+  def costReport(maxLen: Int): Unit = {
+    var worst = (0.0, "")
+    for (w <- Exhaust.words(maxLen)) {
+      val c = cost(w)
+      val ratio = if (w.isEmpty) { 0.0 } else { c.total.toDouble / w.length }
+      if (ratio > worst._1) { worst = (ratio, w) }
+    }
+    println(f"exhaustive <= $maxLen: max work/|W| = ${worst._1}%.2f on '${worst._2}'")
+    val rng = new scala.util.Random(7)
+    val samples: Vector[(String, String)] = Vector(
+      "a^2000" -> "a" * 2000,
+      "(ab)^1000" -> "ab" * 1000,
+      "(aab)^700" -> "aab" * 700,
+      "fibonacci 2000" -> fibonacciWord(2000),
+      "zimin 10" -> zimin(10),
+      "a^1000 b a^1000" -> ("a" * 1000 + "b" + "a" * 1000),
+      "a^500 b a^500 b a^500" -> ("a" * 500 + "b" + "a" * 500 + "b" + "a" * 500),
+      "random 2000" -> Vector.fill(2000)("ab".charAt(rng.nextInt(2))).mkString,
+      "random pal 2000" -> { val h = Vector.fill(1000)("ab".charAt(rng.nextInt(2))).mkString; h + h.reverse })
+    for ((name, w) <- samples) {
+      val c = cost(w)
+      println(f"$name%-24s |W|=${w.length}%5d values=${c.values}%6d regions=${c.regions}%8d fp=${c.fp}%8d (iterations ${c.fpIterations}%7d) lattices=${c.lattices}%8d  total/|W|=${c.total.toDouble / w.length}%.2f")
+    }
+  }
+
   /** Brute force: prefix lengths m such that W(1..m) is a palindrome, i.e. centres 1..n with R(m) = m−1. */
   def bruteCentres(w: String): Set[Int] =
     (1 to w.length).filter(m => Exhaust.isPal(w.substring(0, m))).toSet
