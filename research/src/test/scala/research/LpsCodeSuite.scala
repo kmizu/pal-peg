@@ -28,7 +28,7 @@ class LpsCodeSuite extends munit.FunSuite {
 
   test("PAL3 warmup W0 = 4 at 1/1 through the code backend with the fallback: the oracle below 2 W0, the machine from n = 8 (PEG = interpreter)") {
     val m = LpsWarmup.machine(1, 1, 4)
-    val opts = LpsCode.Options(fallbackW0 = Some(4))
+    val opts = LpsCode.Options(fallbackBelow = Some(8), minBirth = 4)
     val res = LpsCode.compileMeta(m, opts)
     assert(res.coloring.count <= 4, s"colours ${res.coloring.count}")
     assertEquals(LpsCode.checkSim(m, 10, opts), None)
@@ -39,9 +39,19 @@ class LpsCodeSuite extends munit.FunSuite {
     for (w <- Exhaust.words(9, "ab")) { assertEquals(g2.accepts(w), res.grammar.accepts(w), s"'$w' re-parsed") }
   }
 
+  test("OverlapPal with minAnchor 4 at 1/1 through the code backend: the oracle below 6, the machine (PEG = interpreter) from n = 6") {
+    val m = OverlapPal.machine(1, 1, 4)
+    val opts = LpsCode.Options(fallbackBelow = Some(6), minBirth = 4)
+    val res = LpsCode.compileMeta(m, opts)
+    assert(res.coloring.count <= 4, s"colours ${res.coloring.count}")
+    assertEquals(LpsCode.checkSim(m, 10, opts), None)
+    for (w <- Exhaust.words(6, "ab") if w.nonEmpty) { assertEquals(LpsCode.checkRules(m, w, opts), None, s"'$w'") }
+    for (w <- Exhaust.words(7, "ab") if w.nonEmpty) { assertEquals(LpsWarmup.checkReachable(m, w, 4), None, s"'$w'") }
+  }
+
   test("the trie dispatch gives the same language") {
     val m = LpsWarmup.machine(1, 1, 4)
-    assertEquals(LpsCode.checkSim(m, 10, LpsCode.Options(fallbackW0 = Some(4), dispatch = LpsCode.Trie)), None)
+    assertEquals(LpsCode.checkSim(m, 10, LpsCode.Options(fallbackBelow = Some(8), minBirth = 4, dispatch = LpsCode.Trie)), None)
     assertEquals(LpsCode.checkSim(LpsKmp2.machine(2), 6, LpsCode.Options(dispatch = LpsCode.Trie)), None)
   }
 }

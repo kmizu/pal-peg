@@ -1,6 +1,15 @@
 # Generated grammars
 
-- `pal3-code-m12-f36.peg.gz` — **the current best**: PAL3 with the warmup (no stage below W0 = 64) compiled
+- `overlap-code-a15-b24.peg.gz` — **the current best**: two KMP matcher banks on overlapping anchors
+  (`OverlapPal`, A 15 / B 24 steps per letter, no flags worker) compiled by the site-code backend (`LpsCode`,
+  27 colours, W0 = 32, the machine answers from n = 48, bounded fallback below) and compacted: 6,960 rules,
+  315,161 right-hand-side nodes, 1.82 MB. `run lps-code export overlap 15 24 auto out/overlap-code-a15-b24.peg`.
+  Checks: re-parsed on all words <= 9, Scala matcher on 12 boundary words (47–49), Rust runner on 56 raw words
+  (47–600). Metrics: `metrics/ab-overlap-code-a15-b24.json`.
+- `overlap-old-a15-b24.peg.gz` — the same recognizer with the old site-bit backend: 12,048 rules
+  (`metrics/b2-overlap-old-a15-b24.json`).
+
+- `pal3-code-m12-f36.peg.gz` — PAL3 with the warmup (no stage below W0 = 64) compiled
   by the site-code backend `LpsCode` (a pointer's site as an EOF-anchored second extent, 36 colours, direct
   dispatch) and compacted by `PegOptimize`: 14,819 rules, 739,084 right-hand-side nodes, 4.08 MB. Lengths
   below 128 are decided by the bounded fallback `Short`, the machine answers from n = 128. Produced by

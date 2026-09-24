@@ -184,3 +184,20 @@ reversal 18, matching 44 units, i.e. ≈ 5S, 14S, 4.5S, 11S) and per-phase step 
 does not beat the universal step (36 × ~500 ≈ 18k), because a job's phases are sequential (6A).
 Incremental tables (6B) would cut the r = 3 job's table work from ≈ 14S to ≈ 4S and the flags rate from
 36 toward ≈ 26, about −5k rules, at the price of checkpoint registers: **that is the next cost item.**
+
+
+## 7. EOF-coded sites and overlapping anchors (2026-09-25)
+
+See [`BREAKTHROUGH.md`](BREAKTHROUGH.md) for the design, the checks and the final table. In one line each:
+
+| variant | N | rhs nodes | max rhs | bytes |
+|---|---:|---:|---:|---:|
+| baseline PAL3 12/36 | 25,510 | 2,361,254 | 894 | 12,410,391 |
+| PAL3 + warmup (W0 = 64) + site codes | 14,819 | 739,084 | 793 | 4,083,371 |
+| overlapping anchors (15/24), old site-bit backend | 12,048 | 870,025 | 594 | 4,835,137 |
+| **overlapping anchors (15/24) + site codes (W0 = 32)** | **6,960** | **315,161** | **529** | **1,820,016** |
+
+The two changes are independent and multiply: the site code removes the log₂(sites) predicate rules per
+pointer (and the 40-way dispatches), the overlapping anchors remove the flags worker (72% of the baseline)
+and its consumer. The remaining grammar is the two banks' universal steps × their copies (15 + 24) plus
+2,523 → 1,405 code rules, 54 helpers and 50 fallback rules.

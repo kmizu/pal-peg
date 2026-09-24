@@ -26,8 +26,10 @@ object LpsCode {
   sealed trait Dispatch
   case object Direct extends Dispatch
   case object Trie extends Dispatch
-  /** `fallbackW0`: the PEG answers lengths below 2 W0 with the bounded palindrome grammar (the machine is warmed up) */
-  final case class Options(fallbackW0: Option[Int] = None, dispatch: Dispatch = Direct)
+  /** `fallbackBelow`: the PEG answers the lengths below it with the bounded palindrome grammar, the machine (warmed
+    * up: no machine cell born before tick `minBirth`, which must be >= the colour count) from that length on.
+    * PAL3 with warmup W0: fallbackBelow = 2 W0, minBirth = W0; OverlapPal with minAnchor W0: 3 W0 / 2 and W0. */
+  final case class Options(fallbackBelow: Option[Int] = None, minBirth: Int = 0, dispatch: Dispatch = Direct)
   final case class Result(grammar: Grammar, meta: Map[String, RuleMeta], coloring: SiteCode.Coloring, domains: Vector[Set[Site]])
 
   final class Compiler(m: Machine, hints: Map[String, Inp], colour: Site => Int, colourCount: Int, opts: Options) {
@@ -277,9 +279,9 @@ object LpsCode {
 
     def grammar(): Grammar = {
       curLayer = 0; curSlot = "-"
-      opts.fallbackW0 match {
-        case Some(w0) =>
-          require(w0 >= colourCount, s"the warmup W0 = $w0 is below the colour count $colourCount")
+      opts.fallbackBelow match {
+        case Some(_) =>
+          require(opts.minBirth >= colourCount, s"the earliest machine birth ${opts.minBirth} is below the colour count $colourCount")
           emit(("S", or(Ref("Short"), and(look(Ref("Long")), look(bitRef(m.accept, B)), Star(AnyChar)))))
         case None =>
           val empty: Expr = if (m.initTrue(m.accept)) { Not(AnyChar) } else { FalseE }
@@ -288,7 +290,7 @@ object LpsCode {
       curSlot = "helper"
       SiteCode.helpers(colourCount).foreach(emit)
       curSlot = "fallback"
-      opts.fallbackW0.foreach(w0 => SiteCode.fallback(w0).foreach(emit))
+      opts.fallbackBelow.foreach(limit => SiteCode.fallbackBelow(limit).foreach(emit))
       curSlot = "-"
       val prev: Expr = and(AnyChar, look(AnyChar))
       for ((r, kinds) <- m.regs) {
@@ -332,7 +334,7 @@ object LpsCode {
     var domains: Vector[Set[Site]] = Vector()
     var done = false
     while (!done) {
-      val c = new Compiler(m, hints, trivial, trivialCount, Options(None, opts.dispatch))
+      val c = new Compiler(m, hints, trivial, trivialCount, Options(None, 0, opts.dispatch))
       c.grammar()
       val next = (hints.keySet ++ c.inpOut.keySet).map(k => k -> (hints.getOrElse(k, Set.empty[Char]) ++ c.inpOut.getOrElse(k, Set.empty[Char]))).toMap
       if (next == hints) { done = true; domains = c.domains } else { hints = next }
@@ -355,8 +357,8 @@ object LpsCode {
     while (bad.isEmpty && it.hasNext) {
       val w = it.next()
       val sim = if (w.isEmpty) { m.initTrue(m.accept) } else { Lps.run(m, w).outputs.last }
-      val want = opts.fallbackW0 match {
-        case Some(w0) if w.length < 2 * w0 => LpsPal.isPal(w)
+      val want = opts.fallbackBelow match {
+        case Some(limit) if w.length < limit => LpsPal.isPal(w)
         case _ => sim
       }
       val peg = g.accepts(w)

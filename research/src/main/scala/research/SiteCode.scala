@@ -59,8 +59,11 @@ object SiteCode {
   }
 
   /** Pal_0..Pal_{2w0-1}, Short (exact-length palindromes shorter than 2 w0, EOF inside each alternative), Long (>= 2 w0 letters) */
-  def fallback(w0: Int): Vector[(String, Expr)] = {
-    val top = 2 * w0 - 1
+  def fallback(w0: Int): Vector[(String, Expr)] = fallbackBelow(2 * w0)
+
+  /** Pal_0..Pal_{limit-1}, Short (the palindromes shorter than `limit`, EOF inside each alternative), Long (>= limit letters) */
+  def fallbackBelow(limit: Int): Vector[(String, Expr)] = {
+    val top = limit - 1
     val pals = (0 to top).map { k =>
       val body: Expr = k match {
         case 0 => Eps
@@ -70,7 +73,7 @@ object SiteCode {
       (s"Pal_$k", body)
     }
     val short = ("Short", Choice((0 to top).map(k => Seq(Vector(Ref(s"Pal_$k"), Not(AnyChar)))).toVector))
-    val long = ("Long", Seq(Vector.fill(2 * w0)(AnyChar)))
+    val long = ("Long", Seq(Vector.fill(limit)(AnyChar)))
     pals.toVector :+ short :+ long
   }
 }

@@ -385,22 +385,27 @@ object Main {
       }
       val (n, sz) = g.size
       println(bad.getOrElse(s"ok: $path re-parsed (rules=$n symbols=$sz) agrees with the palindrome oracle on all $count words of length <= $maxLen"))
-    case "lps-code" :: sub :: rest =>
-      // lps-code sizes <m> <f> | optimize <m> <f> <W0|auto> <out.json> [trie] | export <m> <f> <W0|auto> <path> [trie]
-      //          | peg <maxLen> <m> <f> <W0> [trie] | check <m> <f> <W0> <words...> [trie]
+    case "lps-code" :: sub :: kind :: rest =>
+      // lps-code sizes <pal3|overlap> <m> <f> | optimize <kind> <m> <f> <W0|auto> <out.json> [trie] | export <kind> <m> <f> <W0|auto> <path> [trie]
+      //          | peg <kind> <maxLen> <m> <f> <W0> [trie] | check <kind> <m> <f> <W0> <words...> [trie]
+      // pal3: LpsWarmup.machine(m, f, W0), fallback below 2 W0; overlap: OverlapPal.machine(a, b, W0), fallback below 3 W0 / 2
       val trie = rest.contains("trie")
       val args = rest.filter(_ != "trie")
-      def opts(w0: Int) = LpsCode.Options(fallbackW0 = Some(w0), dispatch = if (trie) { LpsCode.Trie } else { LpsCode.Direct })
-      def colours(ms: Int, fs: Int): Int = LpsCode.compileMeta(LpsWarmup.machine(ms, fs, 2)).coloring.count
+      val isOverlap = kind == "overlap"
+      def mk(ms: Int, fs: Int, w0: Int): Lps.Machine = if (isOverlap) { OverlapPal.machine(ms, fs, w0) } else { LpsWarmup.machine(ms, fs, w0) }
+      def firstAnswer(w0: Int): Int = if (isOverlap) { OverlapPal.firstAnswer(w0) } else { LpsWarmup.firstAnswer(w0) }
+      def opts(w0: Int) = LpsCode.Options(fallbackBelow = Some(firstAnswer(w0)), minBirth = w0, dispatch = if (trie) { LpsCode.Trie } else { LpsCode.Direct })
+      def colours(ms: Int, fs: Int): Int = LpsCode.compileMeta(mk(ms, fs, 2)).coloring.count
       def w0Of(ms: Int, fs: Int, spec: String): Int = if (spec == "auto") { SiteCode.nextPow2(math.max(colours(ms, fs), 2)) } else { spec.toInt }
       sub match {
         case "sizes" =>
           val c = colours(args(0).toInt, args(1).toInt)
-          println(s"colours=$c W0=${SiteCode.nextPow2(math.max(c, 2))} firstAnswer=${2 * SiteCode.nextPow2(math.max(c, 2))}")
+          val w0 = SiteCode.nextPow2(math.max(c, 2))
+          println(s"$kind colours=$c W0=$w0 firstAnswer=${firstAnswer(w0)}")
         case "optimize" | "export" =>
           val (ms, fs) = (args(0).toInt, args(1).toInt)
           val w0 = w0Of(ms, fs, args(2))
-          val m = LpsWarmup.machine(ms, fs, w0)
+          val m = mk(ms, fs, w0)
           val t0 = System.nanoTime()
           val res = LpsCode.compileMeta(m, opts(w0))
           val gen = (System.nanoTime() - t0) / 1e9
@@ -409,7 +414,7 @@ object Main {
           if (sub == "export") {
             java.nio.file.Files.write(java.nio.file.Paths.get(args(3)), r.grammar.render.getBytes("UTF-8"))
             val (nn, sz) = r.grammar.size
-            println(s"exported ${args(3)}: rules=$nn symbols=$sz colours=${res.coloring.count} W0=$w0")
+            println(s"exported ${args(3)}: rules=$nn symbols=$sz colours=${res.coloring.count} W0=$w0 firstAnswer=${firstAnswer(w0)}")
           } else {
             val before = PegMetrics.of(res.grammar, comp)
             val after = PegMetrics.of(r.grammar, comp)
@@ -419,24 +424,24 @@ object Main {
             val fallbackRules = kept.count(n => res.meta.get(n).exists(_.slot == "fallback"))
             val commit = scala.sys.process.Process(Seq("git", "rev-parse", "--short", "HEAD")).!!.trim
             val variant = if (trie) { "LpsCode+trie+compact" } else { "LpsCode+direct+compact" }
-            val json = after.json(Seq("machine_variant" -> "LpsWarmup(PAL3)", "compiler_variant" -> variant,
+            val json = after.json(Seq("machine_variant" -> (if (isOverlap) { "OverlapPal" } else { "LpsWarmup(PAL3)" }), "compiler_variant" -> variant,
               "mSteps" -> ms.toString, "fSteps" -> fs.toString, "source_commit" -> commit, "generation_seconds" -> f"$gen%.2f",
-              "site_color_count" -> res.coloring.count.toString, "warmup_W0" -> w0.toString, "site_code_rules" -> codeRules.toString,
-              "helper_rules" -> helperRules.toString, "fallback_rules" -> fallbackRules.toString, "dispatch" -> (if (trie) { "trie" } else { "direct" }),
-              "N_raw" -> before.rules.toString, "rhs_nodes_raw" -> before.rhsNodes.toString))
+              "site_color_count" -> res.coloring.count.toString, "warmup_W0" -> w0.toString, "first_answer" -> firstAnswer(w0).toString,
+              "site_code_rules" -> codeRules.toString, "helper_rules" -> helperRules.toString, "fallback_rules" -> fallbackRules.toString,
+              "dispatch" -> (if (trie) { "trie" } else { "direct" }), "N_raw" -> before.rules.toString, "rhs_nodes_raw" -> before.rhsNodes.toString))
             java.nio.file.Files.write(java.nio.file.Paths.get(args(3)), json.getBytes("UTF-8"))
             println(PegMetrics.markdownHeader)
-            println(before.markdownRow(s"pal3+code $ms/$fs W0=$w0 raw"))
-            println(after.markdownRow(s"pal3+code $ms/$fs W0=$w0 compact"))
-            println(s"colours=${res.coloring.count} W0=$w0 code rules=$codeRules helper=$helperRules fallback=$fallbackRules")
+            println(before.markdownRow(s"$kind+code $ms/$fs W0=$w0 raw"))
+            println(after.markdownRow(s"$kind+code $ms/$fs W0=$w0 compact"))
+            println(s"colours=${res.coloring.count} W0=$w0 firstAnswer=${firstAnswer(w0)} code rules=$codeRules helper=$helperRules fallback=$fallbackRules")
           }
         case "peg" =>
           val (maxLen, ms, fs, w0) = (args(0).toInt, args(1).toInt, args(2).toInt, args(3).toInt)
-          val msg = s"ok: pal3+code $ms/$fs W0=$w0 agrees (fallback below ${2 * w0}, machine above) on all words <= $maxLen"
-          println(LpsCode.checkSim(LpsWarmup.machine(ms, fs, w0), maxLen, opts(w0)).getOrElse(msg))
+          val msg = s"ok: $kind+code $ms/$fs W0=$w0 agrees (fallback below ${firstAnswer(w0)}, machine above) on all words <= $maxLen"
+          println(LpsCode.checkSim(mk(ms, fs, w0), maxLen, opts(w0)).getOrElse(msg))
         case "check" =>
           val (ms, fs, w0) = (args(0).toInt, args(1).toInt, args(2).toInt)
-          val g = LpsCode.compile(LpsWarmup.machine(ms, fs, w0), opts(w0))
+          val g = LpsCode.compile(mk(ms, fs, w0), opts(w0))
           for (w <- args.drop(3)) { val got = g.accepts(w); println(s"${w.length} ${if (got == LpsPal.isPal(w)) "ok" else "WRONG"} PEG=$got oracle=${LpsPal.isPal(w)}") }
         case _ => println("unknown lps-code subcommand")
       }
