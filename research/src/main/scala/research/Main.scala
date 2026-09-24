@@ -3,7 +3,8 @@ package research
 /** `run sanity` checks the harness; `run rttm <anbn|marked> [maxLen]` compiles a machine and checks it. */
 object Main {
   /** the PAL machine of a command family: `lps-pal2-*` → LpsPal2, `lps-pal3-*` → LpsPal3 */
-  def palMachine(cmd: String, m: Int, f: Int): Lps.Machine = if (cmd.contains("pal3")) { LpsPal3.machine(m, f) } else { LpsPal2.machine(m, f) }
+  def palMachine(cmd: String, m: Int, f: Int): Lps.Machine =
+    if (cmd.contains("overlap")) { OverlapPal.machine(m, f, 2) } else if (cmd.contains("pal3")) { LpsPal3.machine(m, f) } else { LpsPal2.machine(m, f) }
   def main(args: Array[String]): Unit = args.toList match {
     case "sanity" :: _ =>
       val anbn = Grammar.parse("S = \"a\" S \"b\" / \"\";")
@@ -167,7 +168,7 @@ object Main {
       val fg = rest.drop(2).headOption.map(_.toInt).getOrElse(1)
       val fu = rest.drop(3).headOption.map(_.toInt).getOrElse(0)
       println(Lps.checkSim(LpsPal.machine(mg, fg, fu), maxLen).getOrElse(s"ok: slot PAL PEG agrees with the interpreter on all words of length <= $maxLen (mGroups=$mg, fGroups=$fg, fusion=$fu)"))
-    case cmd :: rest if cmd == "lps-pal2-sim" || cmd == "lps-pal3-sim" =>
+    case cmd :: rest if cmd == "lps-pal2-sim" || cmd == "lps-pal3-sim" || cmd == "lps-overlap-sim" =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(8)
       val ms = rest.drop(1).headOption.map(_.toInt).getOrElse(6)
       val fs = rest.drop(2).headOption.map(_.toInt).getOrElse(24)
@@ -185,7 +186,7 @@ object Main {
         }
       }
       println(bad.getOrElse(s"ok: $cmd (mSteps=$ms, fSteps=$fs, budget=${m.budget}) agrees on all $count words of length <= $maxLen"))
-    case cmd :: rest if cmd == "lps-pal2-rand" || cmd == "lps-pal3-rand" =>
+    case cmd :: rest if cmd == "lps-pal2-rand" || cmd == "lps-pal3-rand" || cmd == "lps-overlap-rand" =>
       val n = rest.headOption.map(_.toInt).getOrElse(200)
       val len = rest.drop(1).headOption.map(_.toInt).getOrElse(64)
       val ms = rest.drop(2).headOption.map(_.toInt).getOrElse(6)
@@ -203,7 +204,7 @@ object Main {
         i += 1
       }
       println(bad.getOrElse(s"ok: $cmd (mSteps=$ms, fSteps=$fs) agrees on $n random words of length <= ${2 * len + 1}"))
-    case cmd :: rest if cmd == "lps-pal2-size" || cmd == "lps-pal3-size" =>
+    case cmd :: rest if cmd == "lps-pal2-size" || cmd == "lps-pal3-size" || cmd == "lps-overlap-size" =>
       val ms = rest.headOption.map(_.toInt).getOrElse(6)
       val fs = rest.drop(1).headOption.map(_.toInt).getOrElse(24)
       val m = palMachine(cmd, ms, fs)
@@ -217,12 +218,12 @@ object Main {
         println(f"  layer $t%2d ${if (t == 0) "-" else m.schedule(t - 1)}%-7s rules=${rs.size}%4d symbols=$sz%6d")
       }
       if (rest.contains("print")) { println(g.render) }
-    case cmd :: rest if cmd == "lps-pal2-peg" || cmd == "lps-pal3-peg" =>
+    case cmd :: rest if cmd == "lps-pal2-peg" || cmd == "lps-pal3-peg" || cmd == "lps-overlap-peg" =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
       val ms = rest.drop(1).headOption.map(_.toInt).getOrElse(1)
       val fs = rest.drop(2).headOption.map(_.toInt).getOrElse(1)
       println(Lps.checkSim(palMachine(cmd, ms, fs), maxLen).getOrElse(s"ok: $cmd PEG agrees with the interpreter on all words of length <= $maxLen (mSteps=$ms, fSteps=$fs)"))
-    case cmd :: rest if cmd == "lps-pal2" || cmd == "lps-pal3" =>
+    case cmd :: rest if cmd == "lps-pal2" || cmd == "lps-pal3" || cmd == "lps-overlap" =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
       val ms = rest.drop(1).headOption.map(_.toInt).getOrElse(6)
       val fs = rest.drop(2).headOption.map(_.toInt).getOrElse(24)
@@ -290,6 +291,7 @@ object Main {
       val (m, label, extra) = which match {
         case "kmp2" => (LpsKmp2.machine(rest(0).toInt), s"kmp2 n=${rest(0)}", Seq("machine_variant" -> "LpsKmp2", "mSteps" -> rest(0), "fSteps" -> "-"))
         case "pal3" => (LpsPal3.machine(rest(0).toInt, rest(1).toInt), s"pal3 ${rest(0)}/${rest(1)}", Seq("machine_variant" -> "LpsPal3", "mSteps" -> rest(0), "fSteps" -> rest(1)))
+        case "overlap" => (OverlapPal.machine(rest(0).toInt, rest(1).toInt, 2), s"overlap ${rest(0)}/${rest(1)}", Seq("machine_variant" -> "OverlapPal", "mSteps" -> rest(0), "fSteps" -> rest(1)))
         case _ => (LpsPal2.machine(rest(0).toInt, rest(1).toInt), s"pal2 ${rest(0)}/${rest(1)}", Seq("machine_variant" -> "LpsPal2", "mSteps" -> rest(0), "fSteps" -> rest(1)))
       }
       val out = rest.last
@@ -309,6 +311,7 @@ object Main {
       val (m, label, extra) = which match {
         case "kmp2" => (LpsKmp2.machine(args(0).toInt), s"kmp2 n=${args(0)}", Seq("machine_variant" -> "LpsKmp2", "mSteps" -> args(0), "fSteps" -> "-"))
         case "pal3" => (LpsPal3.machine(args(0).toInt, args(1).toInt), s"pal3 ${args(0)}/${args(1)}", Seq("machine_variant" -> "LpsPal3", "mSteps" -> args(0), "fSteps" -> args(1)))
+        case "overlap" => (OverlapPal.machine(args(0).toInt, args(1).toInt, 2), s"overlap ${args(0)}/${args(1)}", Seq("machine_variant" -> "OverlapPal", "mSteps" -> args(0), "fSteps" -> args(1)))
         case _ => (LpsPal2.machine(args(0).toInt, args(1).toInt), s"pal2 ${args(0)}/${args(1)}", Seq("machine_variant" -> "LpsPal2", "mSteps" -> args(0), "fSteps" -> args(1)))
       }
       val out = args.last
@@ -330,7 +333,7 @@ object Main {
       // lps-export kmp2 <n> <path> [inline] | lps-export pal2 <m> <f> <path> [inline]: the compacted grammar, to a file
       val inl = rest.contains("inline")
       val args = rest.filter(_ != "inline")
-      val m = which match { case "kmp2" => LpsKmp2.machine(args(0).toInt); case "pal3" => LpsPal3.machine(args(0).toInt, args(1).toInt); case _ => LpsPal2.machine(args(0).toInt, args(1).toInt) }
+      val m = which match { case "kmp2" => LpsKmp2.machine(args(0).toInt); case "pal3" => LpsPal3.machine(args(0).toInt, args(1).toInt); case "overlap" => OverlapPal.machine(args(0).toInt, args(1).toInt, 2); case _ => LpsPal2.machine(args(0).toInt, args(1).toInt) }
       val r = PegOptimize.compact(Lps.compile(m), PegOptimize.Options(inlineSingleUse = inl))
       java.nio.file.Files.write(java.nio.file.Paths.get(args.last), r.grammar.render.getBytes("UTF-8"))
       val (n, sz) = r.grammar.size
@@ -471,6 +474,26 @@ object Main {
           println(s"${words.size} words, $bad with violations")
         case _ => println("unknown lps-warmup subcommand")
       }
+    case "overlap-profile" :: rest =>
+      // overlap-profile <a> <b> <word> [minAnchor] | overlap-profile <a> <b> structured|switch <maxLen> [minAnchor]
+      val (a, b) = (rest(0).toInt, rest(1).toInt)
+      val (words, minAnchor) = rest(2) match {
+        case "structured" => (LpsProfile.structuredWords(rest(3).toInt), rest.lift(4).map(_.toInt).getOrElse(2))
+        case "switch" => (OverlapProfile.switchWords(rest(3).toInt), rest.lift(4).map(_.toInt).getOrElse(2))
+        case w => (Vector(w), rest.lift(3).map(_.toInt).getOrElse(2))
+      }
+      val m = OverlapPal.machine(a, b, minAnchor)
+      var bad = 0
+      var maxUnits = 0
+      var maxBacklog = 0
+      for (w <- words) {
+        val pr = OverlapProfile.profile(m, w, minAnchor)
+        maxUnits = math.max(maxUnits, pr.maxUnitsPerTick)
+        maxBacklog = math.max(maxBacklog, pr.lives.map(_.maxBacklog).maxOption.getOrElse(0))
+        if (words.size == 1) { println(pr.table) }
+        if (pr.violations.nonEmpty) { bad += 1; if (bad <= 5) { println(s"'${w.take(40)}${if (w.length > 40) "..." else ""}' (${w.length}): " + pr.violations.take(3).mkString("; ")) } }
+      }
+      println(s"overlap $a/$b minAnchor $minAnchor: ${words.size} words, $bad with violations, max units in a tick $maxUnits, max backlog $maxBacklog")
     case "lps-kmp2" :: rest =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
       val n = rest.drop(1).headOption.map(_.toInt).getOrElse(6)
