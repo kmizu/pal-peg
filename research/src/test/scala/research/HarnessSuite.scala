@@ -37,4 +37,8 @@ class HarnessSuite extends munit.FunSuite {
     assertEquals(Rttm2Peg.check(Rttm.anbn, 9), None)
     assertEquals(Rttm2Peg.check(Rttm.markedPal, 7), None)
   }
+
+  test("Slisenko's recursion finds exactly the centres of the initial palindromes") {
+    assertEquals(Slisenko.check(10), None)
+  }
 }

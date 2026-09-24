@@ -25,7 +25,10 @@ object Main {
       println(s"machine $name: states=${m.states.size} tapes=${m.tapes} rules=${m.rules.size}; PEG rules=$rules nodes=$nodes")
       Rttm2Peg.check(m, maxLen)
       if (rest.contains("print")) { println(g.render) }
+    case "slisenko" :: rest =>
+      val maxLen = rest.headOption.map(_.toInt).getOrElse(10)
+      Slisenko.check(maxLen)
     case _ =>
-      println("usage: run sanity | run rttm <anbn|marked> [maxLen] [print]")
+      println("usage: run sanity | run rttm <anbn|marked> [maxLen] [print] | run slisenko [maxLen]")
   }
 }

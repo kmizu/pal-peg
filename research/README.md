@@ -18,6 +18,7 @@ sbt "run rttm marked 8 print"  # also print the grammar
 | `Exhaust.scala` | exhaustive comparison of a grammar with the palindrome oracle, extent checks, random words |
 | `Rttm.scala` | real-time multitape machines (one transition per input symbol) with a program-like rule notation and a simulator |
 | `Rttm2Peg.scala` | compilation of a real-time machine into a PEG: one node per input position, tapes as pairs of persistent stacks, one rule per field |
+| `Slisenko.scala` | reference implementation of the recursion `f` and the conditions (A), (B) of Slisenko's real-time palindrome recognizer (Zapiski LOMI 68, 1977, §§3–4), checked against brute force on all words of length ≤ 14 |
 
 ## Calibration
 
@@ -32,6 +33,17 @@ The compiled PEG has about `2·L + |Q| + k·(2·|Γ| + 3)` rules for a machine w
 So a real-time machine for PAL with a program of a few hundred lines would give a PEG of under a
 thousand rules. The machine has to be real-time (worst-case constant work per input symbol), because
 a PEG evaluates each nonterminal at each position at most once: amortized bounds do not help.
+
+## The candidate machine
+
+Slisenko (1977) gives a complete and short description of a linear-time multitape machine that finds
+all initial palindromes, and shows that a constant-factor speed-up of it runs in real time (his §4,
+claims 4.5 and 4.6). Its parts are the Fischer–Paterson algorithm for the palindromic suffixes of
+a word (a KMP failure function on `X * X`), a two-head symmetry-region search, a four-head extension
+of arithmetic progressions of centres ("chained lattices"), and a recursion `f` over points and
+lattices. `Slisenko.scala` implements `f` and the centre conditions and agrees with brute force.
+The open question for the PEG size is the speed-up factor: the PEG must unroll that many machine
+steps per input symbol, unless the bursts can be expressed as memoized single-cursor walks.
 
 ## Why not the direct routes
 
