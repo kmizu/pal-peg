@@ -299,6 +299,38 @@ object Main {
       java.nio.file.Files.write(java.nio.file.Paths.get(out), json.getBytes("UTF-8"))
       println(PegMetrics.markdownHeader)
       println(mt.markdownRow(label))
+    case "lps-optimize" :: which :: rest =>
+      // lps-optimize kmp2 <n> <out.json> [inline] | lps-optimize pal2 <m> <f> <out.json> [inline]; metrics before/after
+      val inl = rest.contains("inline")
+      val args = rest.filter(_ != "inline")
+      val (m, label, extra) = which match {
+        case "kmp2" => (LpsKmp2.machine(args(0).toInt), s"kmp2 n=${args(0)}", Seq("machine_variant" -> "LpsKmp2", "mSteps" -> args(0), "fSteps" -> "-"))
+        case _ => (LpsPal2.machine(args(0).toInt, args(1).toInt), s"pal2 ${args(0)}/${args(1)}", Seq("machine_variant" -> "LpsPal2", "mSteps" -> args(0), "fSteps" -> args(1)))
+      }
+      val out = args.last
+      val (g, meta) = Lps.compileMeta(m)
+      val comp = (n: String) => meta.get(n).map(_.slot).getOrElse(PegMetrics.componentOfName(n))
+      val before = PegMetrics.of(g, comp)
+      val t0 = System.nanoTime()
+      val r = PegOptimize.compact(g, PegOptimize.Options(inlineSingleUse = inl))
+      val secs = (System.nanoTime() - t0) / 1e9
+      val after = PegMetrics.of(r.grammar, comp)
+      val commit = scala.sys.process.Process(Seq("git", "rev-parse", "--short", "HEAD")).!!.trim
+      val json = after.json(extra ++ Seq("source_commit" -> commit, "compiler_variant" -> (if (inl) { "Lps+compact+inline" } else { "Lps+compact" }),
+        "N_raw" -> before.rules.toString, "rhs_nodes_raw" -> before.rhsNodes.toString, "optimize_seconds" -> f"$secs%.2f"))
+      java.nio.file.Files.write(java.nio.file.Paths.get(out), json.getBytes("UTF-8"))
+      println(PegMetrics.markdownHeader)
+      println(before.markdownRow(label + " raw"))
+      println(after.markdownRow(label + (if (inl) { " compact+inline" } else { " compact" })))
+    case "lps-export" :: which :: rest =>
+      // lps-export kmp2 <n> <path> [inline] | lps-export pal2 <m> <f> <path> [inline]: the compacted grammar, to a file
+      val inl = rest.contains("inline")
+      val args = rest.filter(_ != "inline")
+      val m = which match { case "kmp2" => LpsKmp2.machine(args(0).toInt); case _ => LpsPal2.machine(args(0).toInt, args(1).toInt) }
+      val r = PegOptimize.compact(Lps.compile(m), PegOptimize.Options(inlineSingleUse = inl))
+      java.nio.file.Files.write(java.nio.file.Paths.get(args.last), r.grammar.render.getBytes("UTF-8"))
+      val (n, sz) = r.grammar.size
+      println(s"exported ${args.last}: rules=$n symbols=$sz")
     case "lps-kmp2" :: rest =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
       val n = rest.drop(1).headOption.map(_.toInt).getOrElse(6)
