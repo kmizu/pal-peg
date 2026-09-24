@@ -16,3 +16,8 @@ runner/target/
 # Editors
 .idea/
 .vscode/
+
+# research
+research/target/
+research/project/target/
+research/project/project/

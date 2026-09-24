@@ -158,9 +158,14 @@ object Expr {
   /** Whether an interning index is currently active. */
   def sharing: Boolean = pool != null
 
+  /** Debug hook (`null` when unused): called once for each node that becomes canonical. */
+  var onIntern: Expr => Unit = null
+
   /** Return the canonical instance of `expr` while sharing is active, else `expr`. */
   def intern[E <: Expr](expr: E): E = {
-    if (pool == null) { expr } else { pool.getOrElseUpdate(expr, expr).asInstanceOf[E] }
+    if (pool == null) { expr } else {
+      pool.getOrElseUpdate(expr, { if (onIntern != null) { onIntern(expr) }; expr }).asInstanceOf[E]
+    }
   }
 
   /** Hash-cons equal construction expressions within `body`; release the index on exit.
