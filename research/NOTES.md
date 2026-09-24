@@ -1,0 +1,145 @@
+# Notes: how small can a PEG for PAL be?
+
+Working notes for the `research/small-peg` branch (2026-09-24). Nothing here changes the proof in
+`../proof`.
+
+## 1. The head machine is small
+
+`SlisenkoRT.scala` drives the direct realization of Slisenko's recursion `f` (Zapiski LOMI 68,
+1977, §4) as a multi-head machine: region search, Fischer–Paterson border pass over `S(x)`
+(KMP whose failure chain is walked by head movement), and chained-lattice extension. One unit is
+one step of the machine (every head moves by at most one cell). The machine reads one letter per
+tick and is allowed a fixed number of units per tick; a prefix palindrome must be certified in
+its own tick.
+
+| input | units per tick needed |
+|---|---|
+| all words of length ≤ 14 (32 767) | ≤ 29 |
+| Fibonacci, Thue–Morse, period-doubling, Zimin (3 000) | 23–31 |
+| random palindromes, palindromes of palindromes (3 000) | 41–46 |
+| random words | 5–18 |
+
+Charges are conservative (3 units per KMP position, 2 per failure-chain cell). Random palindromes
+are the worst because their only certification is at the very end, so the whole first half must
+have been processed: the speed needed is the *average* work rate, about 34 units per letter, of
+which the KMP pass is 18. Regions of radius ≤ 3 handled directly barely help (radii 4–10 are
+common: they come from lattice ends and border centres).
+
+So the *algorithmic* content of a real-time PAL recognizer is a few dozen head steps per letter.
+
+## 2. Why the PEG is still not small: cells created within one tick
+
+A PEG built from the machine has one position per letter and, inside a position, one layer of
+nonterminals per unit (registers are functions of the previous layer). Pointers are extents, so a
+pointer names a *node* (position), and a field of the target is a nonterminal name chosen
+statically by the dereferencing rule. This is exactly the scaffolding-automaton model: a node is
+created once per tick with fixed fields.
+
+Consequences, all checked against what PEG can express:
+
+- No equality or order test on pointers (extent comparison is not expressible). Head coincidence,
+  "reached position F_B", "is this the centre" must be replaced by end-of-input tests, null tests,
+  marks on a head's own trail, or unary countdowns.
+- No pointer toward the frontier. Walking toward the start of the word (older nodes) is free;
+  walking toward the frontier needs a *trail* built while walking the other way. Returning to the
+  frontier after a lag costs the lag (walk down from the newest cell by an age counter).
+- Numbers can be pointers into a shared unary chain: decrement and reset are O(1), increment is
+  impossible (it would point to a younger cell); growing numbers are lists of blocks.
+- **A stack that receives k pushes in one tick has k cells in one node.** A pointer into it must
+  carry the index (log₂ B bits per pointer) and every dereference is a B-way choice. This is the
+  same multiplexing that made the 13-million-rule grammar in `../generator` (quantum 512 with
+  pooled tags): with B ≈ 45 units per tick and ~10 registers pointing into such stacks, the
+  layered grammar is roughly 5 000–8 000 rules, not "a few hundred".
+
+The only way around it is a machine that allocates O(1) cells per input letter (unbounded read
+depth per tick is cheap: a data-dependent walk of up to B steps over *existing* node-level cells
+is B rules and no bits). Slisenko's and Galil's algorithms are burst-based (a Fischer–Paterson
+pass after each region), and the burst-free "live centres as O(log n) series" approach needs
+O(log n) updates per tick. Whether a real-time palindrome recognizer with O(1) allocations per
+letter exists is open; it is the question that decides the size of the smallest PEG for PAL.
+
+## 3. What is committed
+
+- `Peg.scala`, `Exhaust.scala`: PEG interpreter and exhaustive checks.
+- `Rttm.scala`, `Rttm2Peg.scala`: real-time multitape machines → PEG (calibration: 27–28 rules
+  for `a^n b^n` and `u#uᴿ`).
+- `Slisenko.scala`: offline reference of `f` and conditions (A)/(B), checked ≤ 14.
+- `SlisenkoRT.scala`: the real-time head machine and its speed measurements (`run slisenko-rt`,
+  `run slisenko-stress`, `run slisenko-profile <word>`).
+- `Psm.scala`: a first pointer-machine sketch (marked palindromes), superseded by the analysis
+  above.
+
+## 4. Slot-scheduled pointer machines (2026-09-24, DESIGN.md route)
+
+`Lps.scala` compiles a pointer machine with a fixed schedule of slots per tick (one layer of
+nonterminals per slot, registers alias to their last writer, pointers carry "site bits" naming
+the allocation site (layer, index) among the sites that can allocate their kind). `LpsKmp.scala` is
+the DESIGN §2 KMP matcher, `LpsPal.scala` the whole recognizer (controller with dyadic clocks
+kept as pointers into the input history, one matcher per stage, one shared flags worker that
+builds the forward view, runs the matcher with the full match kept, walks the failure chain into
+a gap stack and skips to r·S, and a controller that consumes one flag per tick).
+
+Measured (`run lps-kmp-size`, `run lps-pal-size`; all grammars agree with the interpreter and, at
+the working rates, with the oracle; the Rust plain-PEG runner accepts the printed grammars):
+
+| machine | slots/tick | rules | symbols |
+|---|---|---|---|
+| KMP matcher alone, 2 groups | 21 | 2,037 | 29,581 |
+| KMP matcher alone, 3 groups | 31 | 3,213 | 65,693 |
+| PAL, matchers 6 groups, flags 16 groups (interpreter correct on all words ≤ 10 and 1,500 random words ≤ 81) | 318 | 62,012 | 7.06M |
+| PAL, same, each group fused into one slot (`fusion = 1`, exact sequential composition) | 34 | 53,280 | 7.05M |
+| PAL, also the controller slots fused into their neighbours (`fusion = 2`) | 29 | 53,147 | 7.05M |
+
+What the numbers say:
+
+- The working rates are far above DESIGN's 41 local steps per input: a "group" of ten micro-slots
+  processes one letter and two back-up steps, and the flags job of size 4S must finish within S
+  ticks, so 16 groups per tick were needed (6 for the matchers, whose 16-letter table build took 8
+  ticks at 3 groups).
+- Fusing slots does not shrink the grammar: the rules are the distinct expression nodes
+  (dereferences `X`, conditions `K`), and fusion keeps every node of every micro-step. The
+  per-layer fixed cost (register aliases, phase tests) was small.
+- Hence the size is set by the micro-step decomposition itself: sub-phase counters, `at(phase,
+  sub)` guards, one allocation per slot, queue reversals as separate steps. A local step in
+  DESIGN's sense (fixed number of records, fixed-depth reads, one guard set) has to be written as
+  one slot with several allocation sites (now supported: `E.MadeAt`, `Lpm.fuse`, site bits) —
+  that is the remaining work, not more compiler optimisation.
+
+Pitfalls fixed on the way (see the commits): a dereferenced field's predicates consumed the base
+pointer's extent; `Prog` branches were not exclusive (first-wins is per register); the node after
+the last letter evaluated a phantom tick; shared cell tags made every pointer dispatch over all
+modules' layers; fused expressions are DAGs, so hashes are cached and evaluation, substitution and
+use-counting are memoised.
+
+## 5. Universal local steps (2026-09-24, later)
+
+`LpsKmp2.scala` / `LpsPal2.scala`: every worker is `n` copies per tick of one **universal step**
+`U` that performs exactly one local step in DESIGN's sense (a back-up unit, one archive-reversal
+step, one queue-reversal step, one letter load, or one letter processed with its entry allocated,
+enqueued and compared in the same step), written as one exclusive guard set; each kind of cell has
+one allocation site per `U` (`Prog.site`, fields selected by the guards), so a pointer's site bits
+only say which copy of `U` allocated it. The flags worker's own phases (forward view, chain, skip)
+are further branches of the same step.
+
+| machine | slots/tick | rules | symbols | correctness |
+|---|---|---|---|---|
+| KMP matcher, `U` × 4 | 5 | 1,022 | 18,391 | all words ≤ 8 (interpreter), ≤ 6 (PEG vs oracle) |
+| KMP matcher, `U` × 6 | 7 | 1,735 | 45,363 | all words ≤ 8 |
+| PAL2, matchers 6 / flags 32 | 50 | 22,229 | 1.96M | fails at |w| = 7 (the S = 1 job of size 4 in one tick) |
+| PAL2, matchers 8 / flags 40 | 62 | 30,059 | 3.77M | all words ≤ 10; fails on a 64-letter word (the W = 32 matcher is late) |
+| PAL2, matchers 12 / flags 40 (`out/pal2-m12-f40.peg.gz`) | 70 | 33,019 | 3.98M | all words ≤ 10; 500 random words ≤ 121 and 100 ≤ 513; PEG = oracle ≤ 5; Rust runner correct on samples up to 161 letters |
+
+Cost structure at 12 / 40: a matcher `U` is about 215 rules, a flags `U` about 560, of which about
+310 are site-bit rules: with 40 copies every pointer to a flags cell carries 6 bits and every
+dereference dispatches 40 ways. The flags rate itself is DESIGN's bound (≈ 31 local steps per input for the
+job of size 4S with deadline S, plus the overhead of the S = 1 and S = 2 stages).
+
+What would move the number further:
+
+- the two smallest stages (W = 2, 4) could be replaced by a finite check of |w| < 16 in the
+  controller (seven stored letters compared against fixed-depth history reads), removing the
+  small-S overhead that forces 40 rather than 32 flag steps;
+- fewer dereferences per flags step, or a cheaper encoding of "which copy allocated this cell"
+  than log₂(copies) bit rules per pointer — the dominant term now;
+- a flags job that reuses work across the four jobs of a stage (the table of y_r is a prefix of
+  the table of y_{r+1}; only the matching against y^R restarts), which would cut the rate itself.
