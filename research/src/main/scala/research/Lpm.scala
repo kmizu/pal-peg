@@ -124,6 +124,18 @@ object Lpm {
     case C.First => ctx.first
   }
 
+  /** One unit of `step` over the registers `regs` and bits `bits`. */
+  def unitStep(step: Step, regs: Vector[String], bits: Vector[String], st: State, in: RCell, sep: RCell, first: Boolean, layer: Int): State = {
+    val pre = Ctx(st, in, sep, null, first)
+    val made = step.cell.map { cl =>
+      new RCell(evalTE(cl.tag, pre), evalE(cl.p1, pre), evalE(cl.p2, pre), evalE(cl.p3, pre), evalE(cl.p4, pre), layer)
+    }.orNull
+    val ctx = Ctx(st, in, sep, made, first)
+    val rs = regs.map { r => r -> (step.regs.get(r) match { case Some(e) => evalE(e, ctx); case None => st.regs.getOrElse(r, null) }) }.toMap
+    val bs = bits.filter { b => step.bits.get(b) match { case Some(c) => evalC(c, ctx); case None => st.bits(b) } }.toSet
+    State(rs, bs)
+  }
+
   /** One unit. Returns the new state; `cells` counts allocations. */
   def unit(m: Machine, st: State, in: RCell, sep: RCell, first: Boolean, layer: Int): State = {
     val pre = Ctx(st, in, sep, null, first)

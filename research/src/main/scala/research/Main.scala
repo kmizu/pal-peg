@@ -85,6 +85,115 @@ object Main {
         }
         prevSep = sep
       }
+    case "lps-kmp-trace" :: w :: rest =>
+      val pairs = rest.headOption.map(_.toInt).getOrElse(3)
+      val m = LpsKmp.machine(pairs)
+      val names = m.regs.map(_._1)
+      def show(c: Lpm.RCell): String = if (c == null) { "-" } else { s"${c.tag}@${c.layer}" }
+      var st = Lpm.State(Map.empty, m.initTrue)
+      var prevSep: Lpm.RCell = null
+      for (i <- (w.length - 1) to 0 by -1) {
+        val in = new Lpm.RCell(m.alphabet.indexOf(w.charAt(i)), prevSep, null, null, null, -1)
+        val sep = new Lpm.RCell(m.alphabet.length, in, null, null, null, -2)
+        println(s"== tick ${w.length - i}: '${w.charAt(i)}'")
+        for (t <- 1 to m.budget) {
+          st = Lpm.unitStep(m.slotAt(t), names, m.bits, st, in, sep, t == 1, t)
+          val ph = (0 until LpsKmp.phaseBits).map(k => if (st.bits(s"p$k")) { 1 << k } else { 0 }).sum
+          val sb = (0 until LpsKmp.subBits).map(k => if (st.bits(s"s$k")) { 1 << k } else { 0 }).sum
+          val flags = st.bits.filterNot(b => b.startsWith("p") || b.startsWith("s")).toVector.sorted.mkString(",")
+          val regs = names.map(r => s"$r=${show(st.regs.getOrElse(r, null))}").mkString(" ")
+          println(f"  u$t%2d ${m.schedule(t - 1)}%-5s ph=$ph/$sb $flags | $regs")
+        }
+        prevSep = sep
+      }
+    case "lps-kmp-debug" :: w :: rest =>
+      // per layer: the PEG's view at position 0 (last tick) next to the interpreter's state
+      val pairs = rest.headOption.map(_.toInt).getOrElse(2)
+      val m = LpsKmp.machine(pairs)
+      val g = Lps.compile(m)
+      val mt = g.matcher(w)
+      val names = m.regs.map(_._1)
+      var st = Lpm.State(Map.empty, m.initTrue)
+      var prevSep: Lpm.RCell = null
+      val states = Vector.newBuilder[Vector[Lpm.State]]
+      for (i <- (w.length - 1) to 0 by -1) {
+        val in = new Lpm.RCell(m.alphabet.indexOf(w.charAt(i)), prevSep, null, null, null, -1)
+        val sep = new Lpm.RCell(m.alphabet.length, in, null, null, null, -2)
+        val perLayer = Vector.newBuilder[Lpm.State]
+        for (t <- 1 to m.budget) { st = Lpm.unitStep(m.slotAt(t), names, m.bits, st, in, sep, t == 1, t); perLayer += st }
+        states += perLayer.result()
+        prevSep = sep
+      }
+      val all = states.result()
+      def bitsAt(t: Int, pos: Int): String = m.bits.map { b => val n = if (t == 0) { s"${b}_0" } else { g.rules.find(_._1 == s"${b}_$t").map(_ => s"${b}_$t").getOrElse("") }; if (n.isEmpty) { "" } else { s"$b=${if (mt.rule(n, pos).isDefined) 1 else 0}" } }.filter(_.nonEmpty).mkString(" ")
+      def regsAt(t: Int, pos: Int): String = names.map { r => val n = s"${r}_$t"; if (g.rules.exists(_._1 == n)) { s"$r=${mt.rule(n, pos).map(e => (e - pos).toString).getOrElse("null")}" } else { "" } }.filter(_.nonEmpty).mkString(" ")
+      for (pos <- (w.length - 1) to 0 by -1) {
+        val tick = w.length - pos
+        println(s"== position $pos (tick $tick, letter '${w.charAt(pos)}')")
+        for (t <- 1 to m.budget) {
+          val is = all(tick - 1)(t - 1)
+          val ibits = m.bits.filter(is.bits).mkString(",")
+          println(f"  L$t%2d ${m.schedule(t - 1)}%-5s PEG: ${bitsAt(t, pos)} | ${regsAt(t, pos)}")
+          println(f"      interp bits: $ibits")
+        }
+      }
+    case "lps-kmp-eval" :: w :: pairsS :: file :: Nil =>
+      val exprs = scala.io.Source.fromFile(file).getLines().map(_.trim).filter(_.nonEmpty).toList
+      val g = Lps.compile(LpsKmp.machine(pairsS.toInt))
+      val extra = exprs.zipWithIndex.map { case (e, i) => s"ZZ$i = $e;" }.mkString("\n")
+      val g2 = Grammar.parse(g.render + "\n" + extra)
+      val mt = g2.matcher(w)
+      for ((e, i) <- exprs.zipWithIndex) {
+        val vals = (0 to w.length).map(pos => mt.rule(s"ZZ$i", pos).map(x => (x - pos).toString).getOrElse("-")).mkString(" ")
+        println(s"$e   @[$vals]")
+      }
+    case "lps-kmp-rules" :: w :: pat :: rest =>
+      val pairs = rest.headOption.map(_.toInt).getOrElse(2)
+      val g = Lps.compile(LpsKmp.machine(pairs))
+      val mt = g.matcher(w)
+      val re = pat.r
+      for ((n, e) <- g.rules if re.findFirstIn(n).isDefined) {
+        val vals = (0 to w.length).map(pos => mt.rule(n, pos).map(x => (x - pos).toString).getOrElse("-")).mkString(" ")
+        println(s"$n = ${Expr.render(e).take(300)}   @[$vals]")
+      }
+    case "lps-kmp-sim" :: rest =>
+      val maxLen = rest.headOption.map(_.toInt).getOrElse(8)
+      val pairs = rest.drop(1).headOption.map(_.toInt).getOrElse(3)
+      val m = LpsKmp.machine(pairs)
+      val it = Exhaust.words(maxLen, "ab#")
+      var bad: Option[String] = None
+      var count = 0
+      while (bad.isEmpty && it.hasNext) {
+        val w = it.next()
+        count += 1
+        if (w.nonEmpty) {
+          val run = Lps.run(m, w)
+          val rd = w.reverse
+          val want = (1 to w.length).map(k => LpsKmp.oracle(rd.take(k).reverse))
+          if (run.outputs != want) { bad = Some(s"'$w' (reading $rd): got ${run.outputs.map(b => if (b) "1" else "0").mkString} want ${want.map(b => if (b) "1" else "0").mkString}") }
+        }
+      }
+      println(bad.getOrElse(s"ok: slot kmp (pairs=$pairs, budget=${m.budget}) agrees on all $count words of length <= $maxLen"))
+    case "lps-kmp-size" :: rest =>
+      val pairs = rest.headOption.map(_.toInt).getOrElse(3)
+      val m = LpsKmp.machine(pairs)
+      val g = Lps.compile(m)
+      val (rules, symbols) = g.size
+      println(s"lps kmp: pairs $pairs budget ${m.budget}, PEG rules=$rules symbols=$symbols")
+      // histogram: rules per layer, split into registers/bits, named pointers (X), conditions (K), cells (C)
+      val byLayer = g.rules.groupBy { case (n, _) => n.split("_").lift(1).flatMap(_.toIntOption).getOrElse(-1) }
+      for (t <- 0 to m.budget) {
+        val rs = byLayer.getOrElse(t, Vector())
+        def cnt(p: String) = rs.count { case (n, _) => n.startsWith(p) }
+        val sz = rs.map { case (_, e) => Expr.size(e) }.sum
+        println(f"  layer $t%2d ${if (t == 0) "-" else m.schedule(t - 1)}%-5s rules=${rs.size}%4d symbols=$sz%6d  X=${cnt("X")}%3d K=${cnt("K")}%3d C=${cnt("C_")}%3d other=${rs.size - cnt("X") - cnt("K") - cnt("C_")}%3d")
+      }
+      if (rest.contains("print")) { println(g.render) }
+    case "lps-kmp" :: rest =>
+      val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
+      val pairs = rest.drop(1).headOption.map(_.toInt).getOrElse(3)
+      val m = LpsKmp.machine(pairs)
+      println(Lps.check(m, maxLen, LpsKmp.oracle).getOrElse(s"ok: slot kmp interpreter and PEG agree with the oracle on all words of length <= $maxLen"))
     case "lpm-kmp-sim" :: rest =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(8)
       val budget = rest.drop(1).headOption.map(_.toInt).getOrElse(4000)
