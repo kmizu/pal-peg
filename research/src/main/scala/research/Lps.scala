@@ -44,6 +44,20 @@ object Lps {
 
   final class Run(val outputs: Vector[Boolean])
 
+  /** run with a callback after every tick (1-based, in reading order: the word is read from its end) */
+  def trace(m: Machine, w: String)(f: (Int, State) => Unit): Unit = {
+    val regNames = m.regs.map(_._1)
+    var st = State(Map.empty, m.initTrue)
+    var prevSep: RCell = null
+    for (i <- (w.length - 1) to 0 by -1) {
+      val in = new RCell(m.alphabet.indexOf(w.charAt(i)), prevSep, null, null, null, -1)
+      val sep = new RCell(m.alphabet.length, in, null, null, null, -2)
+      for (t <- 1 to m.budget) { st = unitStep(m.slotAt(t), regNames, m.bits, st, in, sep, t == 1, t) }
+      f(w.length - i, st)
+      prevSep = sep
+    }
+  }
+
   def run(m: Machine, w: String): Run = {
     val regNames = m.regs.map(_._1)
     var st = State(Map.empty, m.initTrue)
@@ -290,15 +304,17 @@ object Lps {
     def grammar(): Grammar = {
       val empty: Expr = if (m.initTrue(m.accept)) { Not(AnyChar) } else { FalseE }
       rules += (("S", or(empty, and(look(bitRef(m.accept, B)), Star(AnyChar)))))
-      // layer 0: the previous node's last definitions
+      // layer 0: the previous node's last definitions. The node after the last letter has no tick: its
+      // rules would still evaluate (a phantom tick), so the initial state is taken there instead.
+      val prev: Expr = and(AnyChar, look(AnyChar))
       for ((r, kinds) <- m.regs) {
         val last = regName(r, B)
-        rules += ((s"${r}_0", and(AnyChar, Ref(last))))
-        if (kinds(KInp)) { rules += ((s"${r}_0_kL", look(and(AnyChar, Ref(s"${last}_kL"))))) }
-        for (k <- 0 until nbits(m.layersOf(kinds).size)) { rules += ((bitName(s"${r}_0", k), look(and(AnyChar, Ref(bitName(last, k)))))) }
+        rules += ((s"${r}_0", and(prev, Ref(last))))
+        if (kinds(KInp)) { rules += ((s"${r}_0_kL", look(and(prev, Ref(s"${last}_kL"))))) }
+        for (k <- 0 until nbits(m.layersOf(kinds).size)) { rules += ((bitName(s"${r}_0", k), look(and(prev, Ref(bitName(last, k)))))) }
       }
       for (b <- m.bits) {
-        val carried = look(and(AnyChar, bitRef(b, B)))
+        val carried = look(and(prev, bitRef(b, B)))
         rules += ((s"${b}_0", if (m.initTrue(b)) { or(carried, look(and(AnyChar, Not(AnyChar)))) } else { carried }))
       }
       for (t <- 1 to B) {
@@ -323,6 +339,20 @@ object Lps {
   }
 
   def compile(m: Machine): Grammar = new Compiler(m).grammar()
+
+  /** the compiled PEG must agree with the interpreter on every word, whatever the machine computes */
+  def checkSim(m: Machine, maxLen: Int): Option[String] = {
+    val g = compile(m)
+    val it = Exhaust.words(maxLen, m.alphabet)
+    var bad: Option[String] = None
+    while (bad.isEmpty && it.hasNext) {
+      val w = it.next()
+      val sim = if (w.isEmpty) { m.initTrue(m.accept) } else { run(m, w).outputs.last }
+      val peg = g.accepts(w)
+      if (peg != sim) { bad = Some(s"PEG disagrees with the interpreter on '$w': PEG $peg, interpreter $sim") }
+    }
+    bad
+  }
 
   def check(m: Machine, maxLen: Int, oracle: String => Boolean): Option[String] = {
     val g = compile(m)

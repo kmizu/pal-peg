@@ -140,6 +140,86 @@ object Main {
           println(f"      interp bits: $ibits")
         }
       }
+    case "lps-pal-trace" :: w :: pat :: rest =>
+      val mg = rest.headOption.map(_.toInt).getOrElse(2)
+      val fg = rest.drop(1).headOption.map(_.toInt).getOrElse(3)
+      val re = pat.r
+      Lps.trace(LpsPal.machine(mg, fg), w) { (tick, st) =>
+        val bits = st.bits.toVector.sorted.filter(b => re.findFirstIn(b).isDefined).mkString(" ")
+        val regs = st.regs.toVector.sortBy(_._1).filter { case (n, c) => c != null && re.findFirstIn(n).isDefined }.map { case (n, c) => s"$n=t${c.tag}@${c.layer}" }.mkString(" ")
+        println(s"tick $tick '${w.charAt(w.length - tick)}': $bits | $regs")
+      }
+    case "lps-pal-rules" :: w :: pat :: rest =>
+      val mg = rest.headOption.map(_.toInt).getOrElse(1)
+      val fg = rest.drop(1).headOption.map(_.toInt).getOrElse(1)
+      val g = Lps.compile(LpsPal.machine(mg, fg))
+      val mt = g.matcher(w)
+      val re = pat.r
+      for ((n, e) <- g.rules if re.findFirstIn(n).isDefined) {
+        val vals = (0 to w.length).map(pos => mt.rule(n, pos).map(x => (x - pos).toString).getOrElse("-")).mkString(" ")
+        println(s"$n = ${Expr.render(e).take(300)}   @[$vals]")
+      }
+    case "lps-pal-peg" :: rest =>
+      val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
+      val mg = rest.drop(1).headOption.map(_.toInt).getOrElse(1)
+      val fg = rest.drop(2).headOption.map(_.toInt).getOrElse(1)
+      println(Lps.checkSim(LpsPal.machine(mg, fg), maxLen).getOrElse(s"ok: slot PAL PEG agrees with the interpreter on all words of length <= $maxLen (mGroups=$mg, fGroups=$fg)"))
+    case "lps-pal-sim" :: rest =>
+      val maxLen = rest.headOption.map(_.toInt).getOrElse(8)
+      val mg = rest.drop(1).headOption.map(_.toInt).getOrElse(2)
+      val fg = rest.drop(2).headOption.map(_.toInt).getOrElse(3)
+      val m = LpsPal.machine(mg, fg)
+      val it = Exhaust.words(maxLen, "ab")
+      var bad: Option[String] = None
+      var count = 0
+      while (bad.isEmpty && it.hasNext) {
+        val w = it.next()
+        count += 1
+        if (w.nonEmpty) {
+          val run = Lps.run(m, w)
+          val want = (1 to w.length).map(k => LpsPal.isPal(w.reverse.take(k)))  // the machine reads the word from its end
+          if (run.outputs != want) { bad = Some(s"'$w': got ${run.outputs.map(b => if (b) "1" else "0").mkString} want ${want.map(b => if (b) "1" else "0").mkString}") }
+        }
+      }
+      println(bad.getOrElse(s"ok: slot PAL (mGroups=$mg, fGroups=$fg, budget=${m.budget}) agrees on all $count words of length <= $maxLen"))
+    case "lps-pal-rand" :: rest =>
+      val n = rest.headOption.map(_.toInt).getOrElse(200)
+      val len = rest.drop(1).headOption.map(_.toInt).getOrElse(64)
+      val mg = rest.drop(2).headOption.map(_.toInt).getOrElse(2)
+      val fg = rest.drop(3).headOption.map(_.toInt).getOrElse(3)
+      val m = LpsPal.machine(mg, fg)
+      val rnd = new scala.util.Random(1)
+      var bad: Option[String] = None
+      var i = 0
+      while (bad.isEmpty && i < n) {
+        // random words and random words with long palindromic prefixes
+        val base = Vector.fill(1 + rnd.nextInt(len))(if (rnd.nextBoolean()) 'a' else 'b').mkString
+        val w = rnd.nextInt(3) match { case 0 => base; case 1 => base + base.reverse; case _ => base + base.reverse.drop(1) + (if (rnd.nextBoolean()) "a" else "b") }
+        val run = Lps.run(m, w)
+        val want = (1 to w.length).map(k => LpsPal.isPal(w.reverse.take(k)))
+        if (run.outputs != want) { bad = Some(s"'$w': got ${run.outputs.map(b => if (b) "1" else "0").mkString} want ${want.map(b => if (b) "1" else "0").mkString}") }
+        i += 1
+      }
+      println(bad.getOrElse(s"ok: slot PAL agrees on $n random words of length <= ${2 * len + 1}"))
+    case "lps-pal-size" :: rest =>
+      val mg = rest.headOption.map(_.toInt).getOrElse(2)
+      val fg = rest.drop(1).headOption.map(_.toInt).getOrElse(3)
+      val m = LpsPal.machine(mg, fg)
+      val g = Lps.compile(m)
+      val (rules, symbols) = g.size
+      println(s"lps pal: mGroups $mg fGroups $fg budget ${m.budget}, PEG rules=$rules symbols=$symbols")
+      val byLayer = g.rules.groupBy { case (n, _) => n.split("_").lift(1).flatMap(_.toIntOption).getOrElse(-1) }
+      for (t <- 0 to m.budget) {
+        val rs = byLayer.getOrElse(t, Vector())
+        val sz = rs.map { case (_, e) => Expr.size(e) }.sum
+        println(f"  layer $t%2d ${if (t == 0) "-" else m.schedule(t - 1)}%-7s rules=${rs.size}%4d symbols=$sz%6d")
+      }
+      if (rest.contains("print")) { println(g.render) }
+    case "lps-pal" :: rest =>
+      val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
+      val mg = rest.drop(1).headOption.map(_.toInt).getOrElse(2)
+      val fg = rest.drop(2).headOption.map(_.toInt).getOrElse(3)
+      println(Lps.check(LpsPal.machine(mg, fg), maxLen, LpsPal.isPal).getOrElse(s"ok: slot PAL interpreter and PEG agree with the oracle on all words of length <= $maxLen"))
     case "lps-kmp-eval" :: w :: pairsS :: file :: Nil =>
       val exprs = scala.io.Source.fromFile(file).getLines().map(_.trim).filter(_.nonEmpty).toList
       val g = Lps.compile(LpsKmp.machine(pairsS.toInt))

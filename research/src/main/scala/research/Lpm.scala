@@ -64,8 +64,9 @@ object Lpm {
     step: Step)
 
   /** Guarded parallel updates; the first guard that holds wins. */
-  final class Prog(phaseBits: Int, subBits: Int) {
+  final class Prog(phaseBits: Int, subBits: Int, px: String = "", exclusive: Boolean = false) {
     private val regUpd = mutable.HashMap.empty[String, Vector[(C, E)]]
+    private var seen = Vector.empty[C]
     private val bitUpd = mutable.HashMap.empty[String, Vector[(C, C)]]
     private var cellUpd = Vector.empty[(C, Cell)]
     final class Upd(g: C) {
@@ -73,10 +74,16 @@ object Lpm {
       def bit(b: String, v: C): Unit = { bitUpd(b) = bitUpd.getOrElse(b, Vector()) :+ ((g, v)) }
       def alloc(tag: TE, p1: E = E.Null, p2: E = E.Null, p3: E = E.Null, p4: E = E.Null): E = { cellUpd = cellUpd :+ ((g, Cell(tag, p1, p2, p3, p4))); E.Made }
       def alloc(tag: Int, p1: E, p2: E, p3: E, p4: E): E = alloc(TE.Const(tag), p1, p2, p3, p4)
-      def phase(k: Int): Unit = { for (i <- 0 until phaseBits) { bit(s"p$i", if (((k >> i) & 1) == 1) { C.True } else { C.False }) }; sub(0) }
-      def sub(k: Int): Unit = { for (i <- 0 until subBits) { bit(s"s$i", if (((k >> i) & 1) == 1) { C.True } else { C.False }) } }
+      def phase(k: Int): Unit = { for (i <- 0 until phaseBits) { bit(s"${px}p$i", if (((k >> i) & 1) == 1) { C.True } else { C.False }) }; sub(0) }
+      def sub(k: Int): Unit = { for (i <- 0 until subBits) { bit(s"${px}s$i", if (((k >> i) & 1) == 1) { C.True } else { C.False }) } }
     }
-    def when(g: C)(f: Upd => Unit): Unit = f(new Upd(g))
+    /** the guard wins per register/bit: the first `when` in order that holds and updates it. With `exclusive`,
+      * every guard is conjoined with the negation of all earlier guards, so at most one branch acts. */
+    def when(g: C)(f: Upd => Unit): Unit = {
+      val g2 = if (exclusive && seen.nonEmpty) { C.all((seen.map(C.Not.apply) :+ g)*) } else { g }
+      seen = seen :+ g
+      f(new Upd(g2))
+    }
     def build(regs: Vector[String], bits: Vector[String]): Step = {
       val rs = regs.flatMap { r => regUpd.get(r).map { us => r -> us.foldRight(E.Reg(r): E) { case ((g, v), acc) => E.Ite(g, v, acc) } } }.toMap
       val bs = bits.flatMap { b => bitUpd.get(b).map { us => b -> us.foldRight(C.Bit(b): C) { case ((g, v), acc) => Ite2(g, v, acc) } } }.toMap
