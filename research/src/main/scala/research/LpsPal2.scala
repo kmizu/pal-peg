@@ -23,7 +23,12 @@ object LpsPal2 {
   /** The universal KMP step over module `M`. The module adds its letter-loading branches (`load`) between
     * the back-up branches and the letter-processing branches, and its own phases after them (`extra`).
     * A load branch sets `c` and `have`, or `eop` and `have` at the end of the pattern. */
-  final class Kmp2(M: Mod, T: Tags, atFrontier: C, keepFull: Boolean) {
+  /** `Hooks` (all optional): `matchStart` runs when REV ends and MATCH begins; `lose` runs at every step that
+    * shortens the match by one without consuming a letter or consumes a letter without growing it (a root
+    * mismatch, a back-up unit in MATCH); `unaryAlt` = (guard, below) adds a use of the UNARY site. */
+  final case class Hooks(matchStart: Prog#Upd => Unit = _ => (), lose: Prog#Upd => Unit = _ => (), unaryAlt: Option[(C, E)] = None)
+
+  final class Kmp2(M: Mod, T: Tags, atFrontier: C, keepFull: Boolean, hooks: Hooks = Hooks()) {
     import M.*
     import T.*
     val regNames: Vector[String] = Vector("c", "ent", "cur", "pFail", "front", "rear", "gap", "gw", "pRoot")
@@ -35,7 +40,7 @@ object LpsPal2 {
     def setPhase(u: Prog#Upd, g: C, ifTrue: Int, ifFalse: Int): Unit =
       for (i <- 0 until phaseBits) { u.bit(n(s"p$i"), Ite2(g, bitOf(ifTrue, i), bitOf(ifFalse, i))) }
 
-    def universal(load: Prog => Unit, extra: Prog => Unit): Prog = {
+    def universal(load: Prog => Unit, extra: (Prog, E) => Unit): Prog = {
       val c = r("c"); val cur = r("cur"); val front = r("front"); val rear = r("rear"); val gap = r("gap"); val gw = r("gw"); val ent = r("ent")
       val same = SameTag(c, Fld(cur, 1))
       val gwDone = IsNull(below(gw))
@@ -62,15 +67,16 @@ object LpsPal2 {
         Ite(gEnd, Null, c), Ite(gFirst, Null, r("pFail")), Ite(gFirst, Null, r("pRoot")), Ite(gFirst, Null, ent))
       val q: E = p.site(Const(EQC), Null, selectE(Vector((pushing, front), (gNew, rear)), front),
         selectE(Vector((pushing, cur), (gNew, e)), entryOf(rear)), Null)
-      val g: E = p.site(Const(UNARY), Null, Ite(gFirst, Null, gap), Null, Null)
+      val gBelow: E = hooks.unaryAlt match { case Some((hg, hb)) => Ite(hg, hb, Ite(gFirst, Null, gap)); case None => Ite(gFirst, Null, gap) }
+      val g: E = p.site(Const(UNARY), Null, gBelow, Null, Null)
       p.when(gBack) { u =>
         u.set(n("front"), q); u.set(n("cur"), Fld(cur, 4)); u.set(n("gap"), g); u.set(n("gw"), below(gw))
         setPhase(u, gwDone, BUILD, BACK)
       }
       p.when(gRevPush) { u => u.set(n("front"), q); u.set(n("cur"), Fld(cur, 4)) }
-      p.when(gRevEnd) { u => u.set(n("cur"), entryOf(front)); u.set(n("front"), below(front)); u.phase(MATCH) }
+      p.when(gRevEnd) { u => u.set(n("cur"), entryOf(front)); u.set(n("front"), below(front)); u.phase(MATCH); hooks.matchStart(u) }
       p.when(gMBack) { u =>
-        u.set(n("front"), q); u.set(n("cur"), Fld(cur, 4)); u.set(n("gw"), below(gw))
+        u.set(n("front"), q); u.set(n("cur"), Fld(cur, 4)); u.set(n("gw"), below(gw)); hooks.lose(u)
         setPhase(u, gwDone, MATCH, MBACK)
         u.bit(n("again"), Ite2(gwDone, False, B("again")))
       }
@@ -104,9 +110,9 @@ object LpsPal2 {
         u.set(n("gw"), Fld(nxt, 3)); u.bit(n("again"), False); u.bit(n("have"), False)
         if (keepFull) { u.phase(MATCH) } else { setPhase(u, full, MBACK, MATCH) }
       }
-      p.when(gMGap) { u => u.bit(n("have"), False) }
+      p.when(gMGap) { u => u.bit(n("have"), False); hooks.lose(u) }
       p.when(gMBackStart) { u => u.set(n("gw"), Fld(cur, 3)); u.bit(n("again"), True); u.phase(MBACK) }
-      extra(p)
+      extra(p, g)
       p
     }
   }
@@ -148,7 +154,7 @@ object LpsPal2 {
       }
     }
     def slots(allRegs: Vector[String], allBits: Vector[String]): Map[String, Step] =
-      Map(s"M${s}IN" -> in.build(allRegs, allBits), s"M${s}U" -> core.universal(load, _ => ()).build(allRegs, allBits))
+      Map(s"M${s}IN" -> in.build(allRegs, allBits), s"M${s}U" -> core.universal(load, (_, _) => ()).build(allRegs, allBits))
     def schedule(k: Int): Vector[String] = Vector(s"M${s}IN") ++ Vector.fill(k)(s"M${s}U")
   }
 
@@ -225,7 +231,7 @@ object LpsPal2 {
       }
     }
     def slots(allRegs: Vector[String], allBits: Vector[String]): Map[String, Step] =
-      Map("FREQ" -> req.build(allRegs, allBits), "FU" -> core.universal(load, extra).build(allRegs, allBits))
+      Map("FREQ" -> req.build(allRegs, allBits), "FU" -> core.universal(load, (p, _) => extra(p)).build(allRegs, allBits))
     def schedule(k: Int): Vector[String] = Vector("FREQ") ++ Vector.fill(k)("FU")
   }
 
