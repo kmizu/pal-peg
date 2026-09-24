@@ -24,7 +24,7 @@ object LpmMarked {
         "popping" -> Or(popping, And(First, isHash)),
         "bad" -> Or(bad, all(First, popping, Or(IsNull(stack), Not(SameTag(top, In))))),
         "acc" -> Or(And(Not(First), acc), And(First, Or(all(Not(popping), isHash, IsNull(stack)), And(matches, IsNull(below)))))),
-      cell = Some(Cell(TE.Const(CellTag), In, stack, Null)))
+      cell = Some(Cell(TE.Const(CellTag), In, stack, Null, Null)))
     Machine("ab#", Vector("stack" -> Mach), Vector("popping", "bad", "acc"), Set(), "acc", step)
   }
 

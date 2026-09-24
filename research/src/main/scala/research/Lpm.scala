@@ -23,7 +23,7 @@ object Lpm {
   object E {
     case object Null extends E
     final case class Reg(r: String) extends E
-    final case class Fld(e: E, f: Int) extends E          // f = 1, 2, 3
+    final case class Fld(e: E, f: Int) extends E          // f = 1 (input cell), 2, 3, 4 (machine cells)
     case object In extends E                               // this tick's letter cell
     case object Sep extends E                              // this tick's separator cell
     case object Made extends E                             // the cell allocated by this unit
@@ -49,7 +49,7 @@ object Lpm {
     final case class Const(t: Int) extends TE
     final case class Ite(c: C, a: TE, b: TE) extends TE
   }
-  final case class Cell(tag: TE, p1: E, p2: E, p3: E)
+  final case class Cell(tag: TE, p1: E, p2: E, p3: E, p4: E)
   /** New values for some registers and bits and an optional allocation; the rest is kept. */
   final case class Step(regs: Map[String, E], bits: Map[String, C], cell: Option[Cell])
   final case class Machine(
@@ -62,8 +62,8 @@ object Lpm {
 
   // ---- interpreter ------------------------------------------------------------------------
 
-  final class RCell(val tag: Int, val p1: RCell, val p2: RCell, val p3: RCell, val layer: Int) {
-    def fld(f: Int): RCell = f match { case 1 => p1; case 2 => p2; case _ => p3 }
+  final class RCell(val tag: Int, val p1: RCell, val p2: RCell, val p3: RCell, val p4: RCell, val layer: Int) {
+    def fld(f: Int): RCell = f match { case 1 => p1; case 2 => p2; case 3 => p3; case _ => p4 }
   }
   final case class State(regs: Map[String, RCell], bits: Set[String])
 
@@ -99,7 +99,7 @@ object Lpm {
     val pre = Ctx(st, in, sep, null, first)
     val made = m.step.cell.map { cl =>
       // the cell's fields are computed from the old state (they may not refer to the cell itself)
-      new RCell(evalTE(cl.tag, pre), evalE(cl.p1, pre), evalE(cl.p2, pre), evalE(cl.p3, pre), layer)
+      new RCell(evalTE(cl.tag, pre), evalE(cl.p1, pre), evalE(cl.p2, pre), evalE(cl.p3, pre), evalE(cl.p4, pre), layer)
     }.orNull
     val ctx = Ctx(st, in, sep, made, first)
     val regs = m.regs.map { case (r, _) => r -> (m.step.regs.get(r) match { case Some(e) => evalE(e, ctx); case None => st.regs.getOrElse(r, null) }) }.toMap
@@ -119,8 +119,8 @@ object Lpm {
     val outs = Vector.newBuilder[Boolean]
     val needed = Vector.newBuilder[Int]
     for (i <- (w.length - 1) to 0 by -1) {
-      val in = new RCell(m.alphabet.indexOf(w.charAt(i)), prevSep, null, null, -1)
-      val sep = new RCell(sepTag, in, null, null, -2)
+      val in = new RCell(m.alphabet.indexOf(w.charAt(i)), prevSep, null, null, null, -1)
+      val sep = new RCell(sepTag, in, null, null, null, -2)
       var u = 0
       var last = 0
       var go = true
@@ -258,7 +258,7 @@ object Lpm {
       case C.First => if (t == 1) { TrueE } else { FalseE }
     }
 
-    private val tagBits = 3
+    private val tagBits = 4
     private def tagTest(l: Int, tag: Int): Expr =
       and((0 until tagBits).map { k => if (((tag >> k) & 1) == 1) { Ref(s"C_${l}_g$k") } else { Not(Ref(s"C_${l}_g$k")) } }*)
     private def compTE(te: TE, t: Int, k: Int): Expr = te match {
@@ -303,6 +303,7 @@ object Lpm {
           emitPointer(s"C_${t}_p1", compE(cl.p1, t), Inp)
           emitPointer(s"C_${t}_p2", compE(cl.p2, t), Mach)
           emitPointer(s"C_${t}_p3", compE(cl.p3, t), Mach)
+          emitPointer(s"C_${t}_p4", compE(cl.p4, t), Mach)
         }
         for ((r, kind) <- m.regs) {
           m.step.regs.get(r) match {
