@@ -24,10 +24,20 @@ object OverlapPal {
   import Lpm.C.*
   import Lpm.TE.Const
   import Lps.*
-  import LpsPal.{Mod, Tags, mTags}
+  import LpsPal.{Mod, mTags}
   import LpsPal2.{Kmp2, BUILD, MATCH, MBACK}
 
   val IDLE = 5
+  /** the matcher core of a bank: `Kmp2` (LpsPal2, the baseline) or `GapKmp` (the gap matcher of the under-1000 plan) */
+  sealed trait CoreKind
+  case object Kmp2Core extends CoreKind
+  case object GapCore extends CoreKind
+  trait BankCore {
+    def regs: Vector[(String, Set[K])]
+    def bits: Vector[String]
+    def reset(u: Prog#Upd): Unit
+    def universal(load: Prog => Unit): Prog
+  }
   private def not(c: C): C = Not(c)
   private def below(e: E): E = Fld(e, 2)
   private def prevIn(e: E): E = Fld(Fld(e, 1), 1)
@@ -62,13 +72,22 @@ object OverlapPal {
   }
 
   /** bank 0 = family A (h = W), bank 1 = family B (h = 3W/2) */
-  final class Bank(val s: Int) {
-    val M = new Mod(s"m${s}_", 3, 0, True)
-    val T: Tags = mTags(s)
+  final class Bank(val s: Int, val kind: CoreKind = Kmp2Core) {
+    val M = new Mod(s"m${s}_", 3, if (kind == GapCore) { 2 } else { 0 }, True)
+    val IQC: Int = if (kind == GapCore) { GapKmp.bankTags(s).IQC } else { mTags(s).IQC }
     import M.*
-    import T.IQC
     val queueEmpty: C = all(IsNull(r("pendF")), IsNull(r("pendB")), IsNull(r("pendN")), not(B("rev")))
-    val core = new Kmp2(M, T, queueEmpty, keepFull = false)
+    val core: BankCore = kind match {
+      case GapCore => new GapKmp.Core(M, GapKmp.bankTags(s), GapKmp.Feed(n("src"), n("rc"), n("pendF"), n("pendB"), n("pendN"), n("rev")))
+      case Kmp2Core =>
+        val k = new Kmp2(M, mTags(s), queueEmpty, keepFull = false)
+        new BankCore {
+          def regs: Vector[(String, Set[K])] = k.regs
+          def bits: Vector[String] = k.bits
+          def reset(u: Prog#Upd): Unit = k.reset(u)
+          def universal(load: Prog => Unit): Prog = k.universal(load, (_, _) => ())
+        }
+    }
     val regs: Vector[(String, Set[K])] = core.regs ++ Vector(n("src") -> Set(KInp), n("rc") -> Set(KInp), n("pendF") -> Set(KTag(IQC)), n("pendB") -> Set(KTag(IQC)), n("pendN") -> Set(KTag(IQC)))
     val bits: Vector[String] = core.bits ++ M.ctlBits ++ Vector(n("rev"))
     val notIdle: C = not(phaseIs(IDLE))
@@ -107,7 +126,7 @@ object OverlapPal {
       }
     }
     def slots(allRegs: Vector[String], allBits: Vector[String]): Map[String, Step] =
-      Map(s"M${s}IN" -> in.build(allRegs, allBits), s"M${s}U" -> core.universal(load, (_, _) => ()).build(allRegs, allBits))
+      Map(s"M${s}IN" -> in.build(allRegs, allBits), s"M${s}U" -> core.universal(if (kind == GapCore) { _ => () } else { load }).build(allRegs, allBits))
     def schedule(k: Int): Vector[String] = Vector(s"M${s}IN") ++ Vector.fill(k)(s"M${s}U")
   }
 
@@ -119,15 +138,15 @@ object OverlapPal {
     p
   }
 
-  def machine(aSteps: Int, bSteps: Int, minAnchor: Int = 2): Lps.Machine = {
+  def machine(aSteps: Int, bSteps: Int, minAnchor: Int = 2, kind: CoreKind = Kmp2Core): Lps.Machine = {
     require(aSteps >= 1 && bSteps >= 1 && minAnchor >= 2 && (minAnchor & (minAnchor - 1)) == 0, "rates >= 1, minAnchor a power of two >= 2")
-    val banks = Vector(new Bank(0), new Bank(1))
+    val banks = Vector(new Bank(0, kind), new Bank(1, kind))
     val regs = ctlRegs ++ banks.flatMap(_.regs)
     val bits = ctlBits(minAnchor) ++ banks.flatMap(_.bits)
     val names = regs.map(_._1)
     val slots = Map("CT" -> ct(minAnchor).build(names, bits), "OUT" -> out.build(names, bits)) ++ banks.flatMap(_.slots(names, bits))
     val schedule = Vector("CT") ++ banks(0).schedule(aSteps) ++ banks(1).schedule(bSteps) ++ Vector("OUT")
-    val schema = mTags.map(_.schema).reduce(_ ++ _)
+    val schema = (if (kind == GapCore) { GapKmp.bankTags.map(_.schema) } else { mTags.map(_.schema) }).reduce(_ ++ _)
     Lps.Machine("ab", regs, bits, Set("out", "m0_p0", "m0_p2", "m1_p0", "m1_p2"), "out", schema, schedule, slots)
   }
 

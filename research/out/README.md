@@ -1,6 +1,18 @@
 # Generated grammars
 
-- `overlap-code-a19-b28.peg.gz` — **the current best**: two KMP matcher banks on overlapping anchors
+- `under1000-gap-a10-b13.peg.gz` — **the current best (2026-09-25, `UNDER1000.md`)**: the overlap recognizer with the
+  gap matcher (`GapKmp`: persistent nested gap sequences instead of Kmp2's failure-chain walks, A 10 / B 13 steps
+  per letter) compiled by the site-code backend (16 colours, W0 = 16, the machine answers from n = 24) and compacted:
+  5,902 rules, 208,201 right-hand-side nodes, max rhs 204, 1.18 MB. `run lps-code export gap 10 13 auto
+  out/under1000-gap-a10-b13.peg`. Checks: interpreter on 788 adversarial (≤ 600), 475 switch (≤ 1025), 122 structured
+  (≤ 1025) and 60 random words without violation; re-parsed on all words ≤ 9; Scala matcher on 7 words of 23–64
+  letters; Rust runner on 152 raw words of 24–601 letters (0 mismatches). Metrics: `metrics/under1000-gap-a10-b13.json`
+  (`-trie.json`: the trie dispatch, 5,906 rules, no gain).
+- `under1000-gap-a10-b13-inline-*.peg.gz` — the same grammar after `PegBudgetInline` (every retained rule keeps its
+  extents): nodes ×1.25 → 2,319 rules / 260,183 nodes / 1.36 MB; nodes ×4 → 1,494 rules / 831,817 nodes / 3.63 MB
+  (the smallest N of this repository, at four times the nodes; `metrics/gap-inline/under1000-inline-pareto.md`).
+  The inliner's Pareto tables: `metrics/under1000-inline-pareto.md` (baseline), `metrics/gap-inline/` (gap core).
+- `overlap-code-a19-b28.peg.gz` — the previous best (`BREAKTHROUGH.md`): two KMP matcher banks on overlapping anchors
   (`OverlapPal`, A 19 / B 28 steps per letter, no flags worker) compiled by the site-code backend (`LpsCode`,
   31 colours, W0 = 32, the machine answers from n = 48, bounded fallback below) and compacted: 8,336 rules,
   431,165 right-hand-side nodes, 2.50 MB. `run lps-code export overlap 19 28 auto out/overlap-code-a19-b28.peg`.

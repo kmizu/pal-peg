@@ -1,0 +1,22 @@
+{
+  "source_file": "out/under1000-baseline.peg",
+  "source_commit": "ed7e5a2",
+  "pass": "PegOptimize.compact+PegBudgetInline",
+  "preset": "nodes",
+  "factor": "3.0",
+  "max_rhs_budget": "16384",
+  "eliminated": "6001",
+  "N_before": "8336",
+  "rhs_nodes_before": "431165",
+  "bytes_before": "2502032",
+  "bytes_estimate": "6528214",
+  "seconds": "360.5",
+  "N": 2335,
+  "rhs_nodes": 1292477,
+  "max_rhs_nodes": 4374,
+  "rendered_utf8_bytes": 6447730,
+  "distinct_rhs_dag_nodes": 80832,
+  "dispatch_arm_count": 142454,
+  "N_by_component": {"Code": 31, "Pal": 10, "S": 1, "Tail": 28, "aux": 1081, "b1": 1, "dj": 4, "first": 1, "m0": 490, "m1": 686, "sm0": 1, "sm1": 1},
+  "rhs_nodes_by_component": {"Code": 198, "Pal": 1210, "S": 2552, "Tail": 83, "aux": 249559, "b1": 21, "dj": 110, "first": 45, "m0": 393979, "m1": 644550, "sm0": 85, "sm1": 85}
+}

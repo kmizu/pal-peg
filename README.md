@@ -26,7 +26,7 @@ theorem PalPeg.PalInPeg.evenPal_in_peg : PegSeparation.RecognizedByTotalPEG PalP
 | [`proof/`](proof/) | The proof: Lean 4.31, Mathlib, and the Kim–Park artifact. Start with [`proof/README.md`](proof/README.md), then read [`proof/PROOF.md`](proof/PROOF.md). |
 | [`generator/`](generator/) | The Scala 3 generator. It prints the explicit PEG of the *window-pal* construction, compacts it, and checks it with the runner. |
 | [`runner/`](runner/) | A plain PEG runner in Rust (packrat, no palindrome logic), and a faster compaction tool for generated grammars. |
-| [`research/`](research/) | Experiments towards a *small* PEG for PAL (the current best: 8,336 rules). Start with [`research/APPROACH.md`](research/APPROACH.md); the measurements are in [`research/NOTES.md`](research/NOTES.md). |
+| [`research/`](research/) | Experiments towards a *small* PEG for PAL (the current best: 5,902 rules, 1,494 after budgeted inlining; see [`research/UNDER1000.md`](research/UNDER1000.md)). Start with [`research/APPROACH.md`](research/APPROACH.md); the measurements are in [`research/NOTES.md`](research/NOTES.md). |
 
 ## Checking the proof
 

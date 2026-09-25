@@ -179,3 +179,7 @@ Roughly: `rules ≈ Σ_copies (nodes of the step + pointers × log₂ copies)`.
 | `LpmSlisenko.scala`, `SlisenkoRT.scala` | the Slisenko 1977 route, abandoned at ≈ 5,000 rules per layer × ≥ 300 layers |
 | `NOTES.md` | the measurements and their interpretation, in order |
 | `out/` | the generated grammar |
+
+## Status 2026-09-25 (under-1000 plan)
+
+The gap matcher (`GapKmp.scala`, plan §4 in its amortised form) replaces `Kmp2` in the overlap banks: 5,902 rules at rates 10/13 (`UNDER1000.md`); the budgeted inliner (`PegBudgetInline.scala`) trades rules for rhs nodes down to the recursive core (≈ 46 rules per layer). N < 1,000 was not reached; `UNDER1000.md` §5 quantifies the floor.
