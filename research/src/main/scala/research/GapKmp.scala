@@ -66,8 +66,10 @@ object GapKmp {
 
   /** the matcher core over module `M` (3 phase bits, 2 sub bits) with the letter loads fused into the transitions:
     * a BUILD step consumes the source letter, a MATCH step the FIFO head; a full match is reported when the FIFO
-    * is empty after the consumed letter (the letter is the most recent one) */
-  final class Core(M: Mod, T: Tags, feed: Feed) extends OverlapPal.BankCore {
+    * is empty after the consumed letter (the letter is the most recent one). `matchOnly` (the old role of the pools
+    * plan): only the MATCH/MPOP branches and the FIFO; no BUILD, BPOP, REV, no entry/rear allocation, and the feed's
+    * `src`/`rc` are never read — the core takes over a bank that has finished its build. */
+  final class Core(M: Mod, T: Tags, feed: Feed, matchOnly: Boolean = false) extends OverlapPal.BankCore {
     import M.*
     import T.*
     val regNames: Vector[String] = Vector("cur", "L", "K", "R", "rv", "ks", "end")
@@ -84,8 +86,8 @@ object GapKmp {
       /** the FIFO is empty once the head being consumed is gone: a full match on this letter is at the frontier */
       val atFrontier = all(IsNull(Fld(pendF, 2)), IsNull(pendB), IsNull(pendN), not(rev))
       def prevIn(e: E): E = Fld(Fld(e, 1), 1)
-      val popping = Or(at(BPOP), at(MPOP))
-      val letter = Ite(at(BUILD), src, Fld(pendF, 1))
+      val popping = if (matchOnly) { at(MPOP) } else { Or(at(BPOP), at(MPOP)) }
+      val letter = if (matchOnly) { Fld(pendF, 1) } else { Ite(at(BUILD), src, Fld(pendF, 1)) }
       val same = SameTag(letter, Fld(cur, 1))
       val headIsL = TagIs(L, LNODE)
       val headIsG = TagIs(L, GNODE)
@@ -117,23 +119,25 @@ object GapKmp {
       val gRevPhase = at(REV)
       val gMatchT = all(at(MATCH), not(rev), not(IsNull(pendF)))
       val gFifoRev = And(at(MATCH), Or(rev, And(IsNull(pendF), not(IsNull(pendB)))))
-      val gTrans = Or(gBuildT, gMatchT)
+      val gTrans = if (matchOnly) { gMatchT } else { Or(gBuildT, gMatchT) }
       val p = prog()
       // shared allocation sites, one per tag: the list node (GNODE for the mismatch sequence of a transition, LNODE
       // otherwise), the entry (END at the end of the pattern), the K node, the R node, the queue cell
       val lnode: E = p.site(TE.Ite(gTrans, Const(GNODE), Const(LNODE)),
         selectE(Vector((gRev, Fld(rv, 1)), (gPopG, gE), (gPopR, Fld(R, 1)), (gTakeRev, Fld(k3, 1))), cur),
         Ite(gPopG, Fld(L, 2), Ite(Or(gPopR, gTakeRev), Null, L)), Null, Null)
-      val entry: E = p.site(TE.Ite(gEnd, Const(END), Const(ENTRY)),
-        Ite(gEnd, Null, src), Ite(gEnd, lnode, Ite(same, lnode, L)), K, R)
+      val entry: E = if (matchOnly) { Null } else { p.site(TE.Ite(gEnd, Const(END), Const(ENTRY)),
+        Ite(gEnd, Null, src), Ite(gEnd, lnode, Ite(same, lnode, L)), K, R) }
       val knode: E = p.site(Const(KNODE),
         selectE(Vector((gPopG, lnode), (gSpl2, Fld(ks, 1)), (gSpl1, Null)), k1),
         selectE(Vector((gPopG, K), (gSpl1, K), (gSpl2, K)), k2),
         selectE(Vector((gPopG, Fld(gE, 4)), (gSpl2, Fld(ks, 3)), (gSpl1, Null), (gTakeRev, Null)), k3),
         selectE(Vector((gPopG, Fld(gE, 3)), (gSpl1, Fld(ks, 2)), (gSpl2, Fld(ks, 4))), Null))
-      val rnode: E = p.site(Const(RNODE), entry, Ite(all(gBuildT, same, rOnly), Null, R), Null, Null)   // fast4: the rear becomes [E_i]
-      val iq: E = p.site(Const(IQC), Ite(at(BUILD), src, Fld(pendB, 1)), pendF, Null, Null)
-      def leave(u: Prog#Upd): Unit = M.setPhaseIf(u, at(BPOP), BUILD, MATCH)
+      val rnode: E = if (matchOnly) { Null } else { p.site(Const(RNODE), entry, Ite(all(gBuildT, same, rOnly), Null, R), Null, Null) }   // fast4: the rear becomes [E_i]
+      val iq: E = p.site(Const(IQC), if (matchOnly) { Fld(pendB, 1) } else { Ite(at(BUILD), src, Fld(pendB, 1)) }, pendF, Null, Null)
+      def leave(u: Prog#Upd): Unit =
+        if (matchOnly) { for (i <- 0 until 3) { u.bit(n(s"p$i"), if (((MATCH >> i) & 1) == 1) { True } else { False }) } }
+        else { M.setPhaseIf(u, at(BPOP), BUILD, MATCH) }
       /** the pattern source advances; the first k letters (the replay countdown rc) are prepended to the FIFO */
       def consumeSrc(u: Prog#Upd): Unit = { u.set(feed.src, prevIn(src)); u.set(feed.pendF, Ite(IsNull(rc), pendF, iq)); u.set(feed.rc, prevIn(rc)) }
       // ---- pop in progress
@@ -154,6 +158,7 @@ object GapKmp {
       load(p)
       // ---- BUILD: the pattern letter src against cur = E_f; E_i = (src, h_i) with h_i = same ? C : g,
       //      C = gap(cur) ++ [cur] ++ g (the GNODE); D = (same ? g : C) ++ [E_i]; (cur, live) = pop(D)
+      if (!matchOnly) {   // the BUILD branches stay in their original place: the exclusive guards of later branches depend on the order
       p.when(And(gBuildT, IsNull(cur))) { u => u.set(n("cur"), entry); consumeSrc(u) }   // E_0: empty gap
       p.when(gBuildT) { u =>
         val fast1 = And(same, headIsL)              // D = [head L] ++ …: pop directly
@@ -170,6 +175,7 @@ object GapKmp {
       }
       p.when(gEnd) { u => u.set(n("end"), entry); u.phase(REV) }
       p.when(gRevPhase) { u => u.phase(MATCH) }
+      }
       // ---- MATCH: the FIFO head against cur; a match pops the live sequence (empty = full match: report, then the
       //      reset state from END is popped into cur); a mismatch pushes GNODE(cur, L) and pops, except at an entry
       //      with an empty gap (E_0)

@@ -1,0 +1,100 @@
+package research
+
+/** The pools plan (`POOLS.md` §2): the overlap recognizer of `OverlapPal` with per-*role* register sets instead of
+  * per-bank ones. At every tick ≥ 3W₀/2 one bank is young (building, replaying, catching up to its first answer) and
+  * the other old (answering). `OverlapPal` gives each bank its own registers and its own copies of the universal step,
+  * so the schedule carries the sum of the two banks' step budgets; here the young bank always lives in `y_*` and the
+  * old one in `o_*`, and at every birth (the young bank's first answering tick) the young registers are copied into the
+  * old ones and the young ones are reset for the newborn bank. The schedule is
+  *
+  *   CT, IN, YU × ky, OU × ko, OUT
+  *
+  * with `YU` the full `GapKmp` step over `y_` and `OU` its match-only form over `o_` (the old bank has finished its
+  * build: `OverlapProfile`'s strict check). Both roles use one tag set, so the old registers can hold the cells the
+  * young steps allocated. The controller, the anchors, the replay and the fallback are `OverlapPal`'s. Behaviourally,
+  * `machine(ky, ko, W₀)` is `OverlapPal.machine(ky, ky, W₀, GapCore, oldLimit = ko)` (the same steps per tick for the
+  * same bank); `RolePalSuite` checks that equality tick by tick.
+  */
+object RolePal {
+  import Lpm.{C, Prog}
+  import Lpm.E.*
+  import Lpm.C.*
+  import Lpm.TE.Const
+  import Lps.*
+  import LpsPal.Mod
+  import GapKmp.{MATCH, MPOP}
+
+  val T: GapKmp.Tags = GapKmp.bankTags(0)
+  private def not(c: C): C = Not(c)
+  /** a bank is born this tick (CT's b0 or b1): the handover tick */
+  val birth: C = Or(Bit("b0"), Bit("b1"))
+  /** the registers and bits the handover copies from the young role to the old one */
+  val copiedRegs: Vector[String] = Vector("cur", "L", "K", "R", "rv", "ks", "end", "pendF", "pendB", "pendN")
+  val copiedBits: Vector[String] = Vector("acc", "rev", "p0", "p1", "p2", "s0", "s1")
+
+  /** one role: module `px` (3 phase bits, 2 sub bits) over the one tag set; the old role is match-only */
+  final class Role(val px: String, val young: Boolean) {
+    val M = new Mod(px, 3, 2, True)
+    import M.{r, B, phaseIs}
+    def n(x: String): String = px + x
+    val core = new GapKmp.Core(M, T, GapKmp.Feed(n("src"), n("rc"), n("pendF"), n("pendB"), n("pendN"), n("rev")), matchOnly = !young)
+    val regs: Vector[(String, Set[K])] = core.regs ++
+      (if (young) { Vector(n("src") -> Set[K](KInp), n("rc") -> Set[K](KInp)) } else { Vector() }) ++
+      Vector("pendF", "pendB", "pendN").map(q => n(q) -> Set[K](KTag(T.IQC)))
+    val bits: Vector[String] = core.bits ++ M.ctlBits ++ Vector(n("rev"))
+    val queueEmpty: C = all(IsNull(r("pendF")), IsNull(r("pendB")), IsNull(r("pendN")), not(B("rev")))
+    val notIdle: C = not(phaseIs(OverlapPal.IDLE))
+    /** this tick's letter joins the FIFO: directly at the front only in MATCH/MPOP with an empty queue, otherwise at the
+      * back (as `OverlapPal.Bank.in`); one shared allocation site for the three exclusive pushes */
+    def pushes(p: Prog, g0: C): Unit = {
+      val gF = all(g0, queueEmpty, Or(phaseIs(MATCH), phaseIs(MPOP)))
+      val gB = all(g0, not(gF), notIdle, not(B("rev")))
+      val gN = all(g0, not(gF), not(gB), notIdle)
+      val q = p.site(Const(T.IQC), In, Ite(gB, r("pendB"), Ite(gN, r("pendN"), Null)), Null, Null)
+      p.when(gF) { u => u.set(n("pendF"), q); u.bit(n("acc"), False) }
+      p.when(gB) { u => u.set(n("pendB"), q); u.bit(n("acc"), False) }
+      p.when(gN) { u => u.set(n("pendN"), q); u.bit(n("acc"), False) }
+    }
+  }
+
+  /** on a birth: the old role takes the young role's state (the retiring old bank is dropped) */
+  def handover(y: Role, o: Role): Prog = {
+    val p = new Prog(0, 0, "", exclusive = true)
+    p.when(birth) { u =>
+      for (x <- copiedRegs) { u.set(o.n(x), Reg(y.n(x))) }
+      for (b <- copiedBits) { u.bit(o.n(b), Bit(y.n(b))) }
+    }
+    p
+  }
+
+  /** on a birth the young role is reset for the newborn bank (`OverlapPal.Bank.in`: the birth cell is the pattern
+    * source, the replay countdown the saved dyadic pointer — the half clock for family A, `pw` for family B);
+    * otherwise this tick's letter joins its FIFO */
+  def youngIn(y: Role): Prog = {
+    val p = y.M.prog()
+    p.when(birth) { u =>
+      y.core.reset(u); u.set(y.n("src"), In); u.set(y.n("rc"), Ite(Bit("b0"), Reg("clk"), Reg("pw")))
+      u.set(y.n("pendF"), Null); u.set(y.n("pendB"), Null); u.set(y.n("pendN"), Null); u.bit(y.n("rev"), False)
+    }
+    y.pushes(p, not(birth))
+    p
+  }
+
+  def oldIn(o: Role): Prog = { val p = o.M.prog(); o.pushes(p, True); p }
+
+  def machine(ky: Int, ko: Int, minAnchor: Int = 2): Lps.Machine = {
+    require(ky >= 1 && ko >= 1 && minAnchor >= 2 && (minAnchor & (minAnchor - 1)) == 0, "pools >= 1, minAnchor a power of two >= 2")
+    val y = new Role("y_", young = true)
+    val o = new Role("o_", young = false)
+    val regs = OverlapPal.ctlRegs ++ y.regs ++ o.regs
+    val bits = OverlapPal.ctlBits(minAnchor) ++ y.bits ++ o.bits
+    val names = regs.map(_._1)
+    // IN = handover, then the young reset/push, then the old push (sequential: each reads the previous one's updates)
+    val in = Lpm.fuse(Lpm.fuse(handover(y, o).build(names, bits), youngIn(y).build(names, bits)), oldIn(o).build(names, bits))
+    val slots = Map("CT" -> OverlapPal.ct(minAnchor).build(names, bits), "IN" -> in,
+      "YU" -> y.core.universal(_ => ()).build(names, bits), "OU" -> o.core.universal(_ => ()).build(names, bits),
+      "OUT" -> OverlapPal.outOf(Bit("o_acc")).build(names, bits))
+    val schedule = Vector("CT", "IN") ++ Vector.fill(ky)("YU") ++ Vector.fill(ko)("OU") ++ Vector("OUT")
+    Lps.Machine("ab", regs, bits, Set("out", "y_p0", "y_p2", "o_p0", "o_p2"), "out", T.schema, schedule, slots)
+  }
+}

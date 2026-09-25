@@ -40,9 +40,17 @@ object OverlapProfile {
   private def phaseOf(st: Lpm.State, px: String): Int = (0 until 3).map(i => if (st.bits(s"${px}p$i")) { 1 << i } else { 0 }).sum
   private def letters(c: Lpm.RCell, m: Lps.Machine): String = { val b = new StringBuilder; var x = c; while (x != null) { b.append(m.alphabet.charAt(x.p1.tag)); x = x.p2 }; b.toString }
 
+  /** Where a bank life's registers are. `Banks` (OverlapPal): family s keeps `m{s}_` for its whole life, slots `M{s}IN`
+    * and `M{s}U…`. `Roles` (RolePal): the young life is in `y_` until its first answering tick and in `o_` from then
+    * on; slots `IN`, `YU`, `OU`. */
+  sealed trait Layout
+  case object Banks extends Layout
+  case object Roles extends Layout
+
   /** `strict`: a bank must have left BUILD/REV (phase MATCH or MPOP, pattern source and replay countdown exhausted) by the
-    * end of its last young tick — the condition under which a match-only old core can take it over (pools plan) */
-  def profile(m: Lps.Machine, w: String, minAnchor: Int, strict: Boolean = false): Profile = {
+    * end of its last young tick — the condition under which a match-only old core can take it over (pools plan).
+    * With `Roles`, also: at every handover the old role receives exactly the young role's state plus this tick's letter. */
+  def profile(m: Lps.Machine, w: String, minAnchor: Int, strict: Boolean = false, layout: Layout = Banks): Profile = {
     val rd = w.reverse
     val n = w.length
     val as = OverlapPal.anchors(minAnchor, 3 * n + 3)
@@ -56,11 +64,22 @@ object OverlapProfile {
     var maxUnits = 0
     var tick = 0
     def v(msg: String): Unit = if (violations.size < 20) { violations += msg }
+    /** the register prefix of family s's current life at tick t (after CT) */
+    def px(s: Int, t: Int): String = layout match {
+      case Banks => s"m${s}_"
+      case Roles => cur(s) match { case Some(life) if t >= start(life.h) => "o_"; case _ => "y_" }
+    }
+    def isU(s: Int, t: Int, slot: String): Boolean = layout match {
+      case Banks => slot.startsWith(s"M${s}U")
+      case Roles => cur(s).isDefined && slot == (if (px(s, t) == "y_") { "YU" } else { "OU" })
+    }
+    def isIn(s: Int, slot: String): Boolean = layout match { case Banks => slot == s"M${s}IN"; case Roles => slot == "IN" }
     // step demand (Task 0 of the pools plan)
-    val bankRegs = (0 to 1).map(s => m.regs.map(_._1).filter(_.startsWith(s"m${s}_")))
-    val bankBits = (0 to 1).map(s => m.bits.filter(_.startsWith(s"m${s}_")))
-    def changed(a: Lpm.State, b: Lpm.State, s: Int): Boolean =
-      bankRegs(s).exists(r => !(a.regs.getOrElse(r, null) eq b.regs.getOrElse(r, null))) || bankBits(s).exists(x => a.bits(x) != b.bits(x))
+    val prefixes = Vector("m0_", "m1_", "y_", "o_")
+    val regsOf = prefixes.map(p => p -> m.regs.map(_._1).filter(_.startsWith(p))).toMap
+    val bitsOf = prefixes.map(p => p -> m.bits.filter(_.startsWith(p))).toMap
+    def changed(a: Lpm.State, b: Lpm.State, p: String): Boolean =
+      regsOf(p).exists(r => !(a.regs.getOrElse(r, null) eq b.regs.getOrElse(r, null))) || bitsOf(p).exists(x => a.bits(x) != b.bits(x))
     val copyIdx = Array(0, 0)
     val demandNow = Array(0, 0)
     val youngMax = Array(0, 0)
@@ -75,56 +94,37 @@ object OverlapProfile {
       if (t != tick) { maxUnits = math.max(maxUnits, unitsThisTick); unitsThisTick = 0; tick = t }
       if (slot == "CT") {
         copyIdx(0) = 0; copyIdx(1) = 0; demandNow(0) = 0; demandNow(1) = 0
-        for (s <- 0 to 1 if st.bits(s"b$s")) { behindRun(s) = 0 }   // a new life of family s
-      }
-      for (s <- 0 to 1 if slot.startsWith(s"M${s}U") && prev != null) {
-        copyIdx(s) += 1
-        if (changed(prev, st, s)) { demandNow(s) = copyIdx(s) }
-      }
-      if (slot == "OUT") {
-        for (s <- 0 to 1; life <- cur(s)) {
-          val d = demandNow(s)
-          val st0 = start(life.h)
-          if (strict && t + 1 == st0) {
-            val ph = phaseOf(st, s"m${s}_")
-            if ((ph != 3 && ph != 4) || st.regs.getOrElse(s"m${s}_src", null) != null || st.regs.getOrElse(s"m${s}_rc", null) != null) {
-              v(s"tick $t: bank $s is still building (phase $ph) at the end of its young window (h = ${life.h})")
-            }
-          }
-          if (t < st0) { youngMax(s) = math.max(youngMax(s), d); youngHist(d) = youngHist.getOrElse(d, 0) + 1 }
-          else {
-            oldMax = math.max(oldMax, d); oldHist(d) = oldHist.getOrElse(d, 0) + 1; if (t == st0) { firstMax = math.max(firstMax, d) }
-            val q = queueLen(st, s)
-            val behind = q > 0 || phaseOf(st, s"m${s}_") == 4 || st.regs.getOrElse(s"m${s}_rv", null) != null
-            oldBacklogMax = math.max(oldBacklogMax, q)
-            behindRun(s) = if (behind) { behindRun(s) + 1 } else { 0 }
-            oldBehindMax = math.max(oldBehindMax, behindRun(s))
-          }
-        }
-      }
-      if (slot == "CT") {
         for (s <- 0 to 1 if st.bits(s"b$s")) {
+          behindRun(s) = 0   // a new life of family s
           if (!as.contains(t)) { v(s"tick $t: bank $s born at a non-anchor") }
           cur(s).foreach(_.retire = t)
           val life = BankLife(s, t)
           lives += life; cur(s) = Some(life)
-          val rc = st.regs.getOrElse(s"m${s}_rc", null)
-          val want = if (s == 0) { t / 2 } else { 2 * t / 3 }
-          // rc is set in the bank's IN slot; checked there
-          val _ = (rc, want)
         }
         if (as.contains(t) && as.indexOf(t) + 1 < as.size && !st.bits("b0") && !st.bits("b1") && t >= minAnchor) { v(s"tick $t: anchor without a birth") }
       }
-      for (s <- 0 to 1 if slot == s"M${s}IN") {
-        if (st.bits(s"b$s")) {
-          val rc = st.regs.getOrElse(s"m${s}_rc", null)
-          val want = if (s == 0) { t / 2 } else { 2 * t / 3 }
-          if (rc == null || rc.tick != want) { v(s"tick $t: bank $s replay countdown depth ${if (rc == null) "null" else rc.tick.toString}, expected $want") }
-        }
+      for (s <- 0 to 1 if isU(s, t, slot) && prev != null) {
+        copyIdx(s) += 1
+        if (changed(prev, st, px(s, t))) { demandNow(s) = copyIdx(s) }
       }
-      for (s <- 0 to 1 if slot.startsWith(s"M${s}U") && prev != null) {
-        val ph = phaseOf(st, s"m${s}_")
-        val was = phaseOf(prev, s"m${s}_")
+      for (s <- 0 to 1 if isIn(s, slot) && st.bits(s"b$s")) {
+        val rc = st.regs.getOrElse(s"${px(s, t)}rc", null)
+        val want = if (s == 0) { t / 2 } else { 2 * t / 3 }
+        if (rc == null || rc.tick != want) { v(s"tick $t: bank $s replay countdown depth ${if (rc == null) "null" else rc.tick.toString}, expected $want") }
+      }
+      if (layout == Roles && slot == "IN" && prev != null && (st.bits("b0") || st.bits("b1"))) {
+        // the handover: the old role is the young role before IN, plus this tick's letter if the bank was not idle
+        val same = RolePal.copiedRegs.filterNot(_.startsWith("pend")).forall(r => prev.regs.getOrElse(s"y_$r", null) eq st.regs.getOrElse(s"o_$r", null)) &&
+          Vector("p0", "p1", "p2", "s0", "s1").forall(b => prev.bits(s"y_$b") == st.bits(s"o_$b"))
+        val idle = phaseOf(prev, "y_") == OverlapPal.IDLE
+        val wantQ = queue(prev, "y_", m) + (if (idle) { "" } else { rd(t - 1).toString })
+        if (!same) { v(s"tick $t: the handover did not copy the young core registers and phase") }
+        if (queue(st, "o_", m) != wantQ) { v(s"tick $t: the old FIFO after the handover is '${queue(st, "o_", m).take(30)}', expected '${wantQ.take(30)}'") }
+      }
+      for (s <- 0 to 1 if isU(s, t, slot) && prev != null) {
+        val p = px(s, t)
+        val ph = phaseOf(st, p)
+        val was = phaseOf(prev, p)
         if (was != OverlapPal.IDLE) { unitsThisTick += 1 }
         cur(s).foreach { life =>
           if (was != OverlapPal.IDLE) { val nm = phaseNames(was); life.units(nm) = life.units.getOrElse(nm, 0) + 1 }
@@ -133,12 +133,12 @@ object OverlapProfile {
             life.revEnd = t
             val h = life.h
             val t0 = start(h) - h
-            val fifo = queue(st, s, m)
+            val fifo = queue(st, p, m)
             if (fifo != rd.substring(t0, t)) { v(s"tick $t: bank $s FIFO at the end of REV is '${fifo.take(30)}', expected '${rd.substring(t0, t).take(30)}'") }
-            if (st.regs.getOrElse(s"m${s}_rc", null) != null) { v(s"tick $t: bank $s rc not null at the end of REV") }
+            if (st.regs.getOrElse(s"${p}rc", null) != null) { v(s"tick $t: bank $s rc not null at the end of REV") }
           }
-          if (life.replayDone < 0 && st.regs.getOrElse(s"m${s}_rc", null) == null && life.h < t + 1) { life.replayDone = t }
-          if (ph == 0 && st.regs.getOrElse(s"m${s}_rc", null) != null && st.regs.getOrElse(s"m${s}_pendF", null) == null && st.bits(s"m${s}_have")) {
+          if (life.replayDone < 0 && st.regs.getOrElse(s"${p}rc", null) == null && life.h < t + 1) { life.replayDone = t }
+          if (ph == 0 && st.regs.getOrElse(s"${p}rc", null) != null && st.regs.getOrElse(s"${p}pendF", null) == null && st.bits(s"${p}have")) {
             // the first load has happened (have) and the replay countdown still runs: pendF must hold the replay
             v(s"tick $t: bank $s pendF null while the replay countdown runs")
           }
@@ -146,26 +146,44 @@ object OverlapProfile {
       }
       if (slot == "OUT") {
         for (s <- 0 to 1; life <- cur(s)) {
-          val ph = phaseOf(st, s"m${s}_")
-          val backlog = queueLen(st, s) + (if (st.bits(s"m${s}_have")) { 1 } else { 0 })
-          life.maxBacklog = math.max(life.maxBacklog, backlog)
-          if (ph == 3 || ph == 4) {
-            val h = life.h
-            val t0 = start(h) - h
-            if (t >= start(h)) {
-              val fifo = (if (st.bits(s"m${s}_have")) { val c = st.regs(s"m${s}_c"); m.alphabet.charAt(c.tag).toString } else { "" }) + queue(st, s, m)
-              if (!rd.substring(t0, t).endsWith(fifo)) { v(s"tick $t: bank $s FIFO '${fifo.take(30)}' is not a suffix of the text") }
+          val p = px(s, t)
+          val d = demandNow(s)
+          val st0 = start(life.h)
+          if (strict && t + 1 == st0) {
+            val ph = phaseOf(st, p)
+            if ((ph != 3 && ph != 4) || st.regs.getOrElse(s"${p}src", null) != null || st.regs.getOrElse(s"${p}rc", null) != null) {
+              v(s"tick $t: bank $s is still building (phase $ph) at the end of its young window (h = ${life.h})")
             }
+          }
+          if (t < st0) { youngMax(s) = math.max(youngMax(s), d); youngHist(d) = youngHist.getOrElse(d, 0) + 1 }
+          else {
+            oldMax = math.max(oldMax, d); oldHist(d) = oldHist.getOrElse(d, 0) + 1; if (t == st0) { firstMax = math.max(firstMax, d) }
+            val q = queueLen(st, p)
+            val behind = q > 0 || phaseOf(st, p) == 4 || st.regs.getOrElse(s"${p}rv", null) != null
+            oldBacklogMax = math.max(oldBacklogMax, q)
+            behindRun(s) = if (behind) { behindRun(s) + 1 } else { 0 }
+            oldBehindMax = math.max(oldBehindMax, behindRun(s))
+          }
+          val ph = phaseOf(st, p)
+          val backlog = queueLen(st, p) + (if (st.bits(s"${p}have")) { 1 } else { 0 })
+          life.maxBacklog = math.max(life.maxBacklog, backlog)
+          if ((ph == 3 || ph == 4) && t >= st0) {
+            val t0 = st0 - life.h
+            val fifo = (if (st.bits(s"${p}have")) { val c = st.regs(s"${p}c"); m.alphabet.charAt(c.tag).toString } else { "" }) + queue(st, p, m)
+            if (!rd.substring(t0, t).endsWith(fifo)) { v(s"tick $t: bank $s FIFO '${fifo.take(30)}' is not a suffix of the text") }
           }
         }
         answering(t) match {
           case Some(h) if t >= 3 =>
             val fam = if ((h & (h - 1)) == 0) { 0 } else { 1 }
-            val clkNull = st.regs.getOrElse("clk", null) == null
-            if (clkNull != (fam == 0)) { v(s"tick $t: clk selects bank ${if (clkNull) 0 else 1}, the schedule says $fam (h = $h)") }
+            if (layout == Banks) {
+              val clkNull = st.regs.getOrElse("clk", null) == null
+              if (clkNull != (fam == 0)) { v(s"tick $t: clk selects bank ${if (clkNull) 0 else 1}, the schedule says $fam (h = $h)") }
+            }
+            val accBit = layout match { case Banks => s"m${fam}_acc"; case Roles => "o_acc" }
             val t0 = start(h) - h
             val want = rd.substring(t0, t).endsWith(rd.take(h).reverse)
-            if (st.bits(s"m${fam}_acc") != want) { v(s"tick $t: bank $fam reports ${st.bits(s"m${fam}_acc")}, the text ${if (want) "does" else "does not"} end with the pattern (h = $h)") }
+            if (st.bits(accBit) != want) { v(s"tick $t: bank $fam reports ${st.bits(accBit)}, the text ${if (want) "does" else "does not"} end with the pattern (h = $h)") }
           case _ => ()
         }
         val wantOut = if (t >= 3 && t < OverlapPal.firstAnswer(minAnchor)) { false } else { LpsPal.isPal(rd.take(t)) }
@@ -192,18 +210,18 @@ object OverlapProfile {
     }.map(_.take(maxLen))
   }
 
-  private def queue(st: Lpm.State, s: Int, m: Lps.Machine): String = {
-    val f = st.regs.getOrElse(s"m${s}_pendF", null)
-    val b = st.regs.getOrElse(s"m${s}_pendB", null)
-    val nn = st.regs.getOrElse(s"m${s}_pendN", null)
+  private def queue(st: Lpm.State, p: String, m: Lps.Machine): String = {
+    val f = st.regs.getOrElse(s"${p}pendF", null)
+    val b = st.regs.getOrElse(s"${p}pendB", null)
+    val nn = st.regs.getOrElse(s"${p}pendN", null)
     val front = if (f == null) { "" } else { letters(f, m) }
     val back = if (b == null) { "" } else { letters(b, m).reverse }
     val next = if (nn == null) { "" } else { letters(nn, m).reverse }
-    if (st.bits(s"m${s}_rev")) { back + front + next } else { front + back + next }
+    if (st.bits(s"${p}rev")) { back + front + next } else { front + back + next }
   }
-  private def queueLen(st: Lpm.State, s: Int): Int = {
+  private def queueLen(st: Lpm.State, p: String): Int = {
     def len(c: Lpm.RCell): Int = { var k = 0; var x = c; while (x != null) { k += 1; x = x.p2 }; k }
-    len(st.regs.getOrElse(s"m${s}_pendF", null)) + len(st.regs.getOrElse(s"m${s}_pendB", null)) + len(st.regs.getOrElse(s"m${s}_pendN", null))
+    len(st.regs.getOrElse(s"${p}pendF", null)) + len(st.regs.getOrElse(s"${p}pendB", null)) + len(st.regs.getOrElse(s"${p}pendN", null))
   }
 
   /** adversarial words for the start-up of a bank: `b a^(n-2) b` at every length (the bank whose first answer is n has
@@ -255,7 +273,8 @@ object OverlapProfile {
 
   /** Profile `families` (name -> words, in order) on `m` in parallel over `threads` threads; stop scheduling at the first
     * violating word. The machines, interpreter and profiler keep all mutable state per call, so words are independent. */
-  def grid(label: String, m: Lps.Machine, minAnchor: Int, strict: Boolean, families: Vector[(String, Vector[String])], threads: Int): GridResult = {
+  def grid(label: String, m: Lps.Machine, minAnchor: Int, strict: Boolean, families: Vector[(String, Vector[String])], threads: Int,
+           layout: Layout = Banks): GridResult = {
     import java.util.concurrent.{Executors, TimeUnit}
     import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger, AtomicReference}
     val pool = Executors.newFixedThreadPool(threads)
@@ -266,7 +285,7 @@ object OverlapProfile {
     for ((fam, ws) <- families; w <- ws) {
       pool.submit(new Runnable {
         def run(): Unit = if (!failed.get()) {
-          val pr = profile(m, w, minAnchor, strict)
+          val pr = profile(m, w, minAnchor, strict, layout)
           count.incrementAndGet()
           demand.updateAndGet(d => d.merge(pr.demand))
           if (pr.violations.nonEmpty && failed.compareAndSet(false, true)) { first.set(Some((s"$fam: $w", pr.violations.take(2).mkString("; ")))) }

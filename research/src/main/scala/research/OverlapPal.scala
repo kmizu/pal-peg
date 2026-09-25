@@ -145,10 +145,12 @@ object OverlapPal {
   }
 
   /** out: the short words by the letter counter, then the answering bank (family A while clk is null) */
-  def out: Prog = {
+  def out: Prog = outOf(Ite2(IsNull(Reg("clk")), Bit("m0_acc"), Bit("m1_acc")))
+  /** out: the short words by the letter counter, then `answer` (RolePal: the old role's report) */
+  def outOf(answer: C): Prog = {
     val p = new Prog(0, 0, "", exclusive = true)
     val short = Or(smIs(1), And(smIs(2), Ite2(TagIs(In, 1), Bit("first"), not(Bit("first")))))
-    p.when(True) { u => u.bit("out", Ite2(smIs(3), Ite2(IsNull(Reg("clk")), Bit("m0_acc"), Bit("m1_acc")), short)) }
+    p.when(True) { u => u.bit("out", Ite2(smIs(3), answer, short)) }
     p
   }
 
