@@ -32,46 +32,66 @@ keeps the dyadic clock `pw/nb` and one half clock `clk` (armed at a dyadic birth
 `clk == null` selects family A). `Kmp2` is reused unchanged. The middle-palindrome flags worker (72% of the
 baseline grammar), its results and the CT2 consumer are gone.
 
+## Rates: the start-up bound and the adversarial words
+
+The final review found that the first rate search (structured, random, switch words) had accepted rates
+at which a bank's *first* answer is late: the pattern `a^(h−1) b` is the most expensive table build for
+`Kmp2` (about 4 steps per `a`, then a full-chain back-up on the `b`), and the palindrome `b a^(n−2) b` gives
+exactly that pattern to the bank answering at `n`. `OverlapProfile.adversarialWords` now contains
+`b a^(n−2) b` for every `n` and `a^i b a^j b a^i` around the anchors (`LpsProfile.adversarialWords` the same
+for PAL3). An accounting from the per-operation costs of `Kmp2` (build ≤ ~6 steps per letter including back-ups
+and entry-queue reversals, archive reversal `h + 1`, replayed letters 2 each, new letters 3 each) gives, for
+the `n0 − h` ticks before the first answer, `(6W + W + W + 1.5W) / (W/2) = 19` steps per tick for family A
+and `(9W + 1.5W + 2W + 1.5W) / (W/2) = 28` for family B. The measured minima agree exactly: A = 18 and
+B = 27 still fail adversarial words, **19/28** passes all families (`out/metrics/overlap-rate-search.md`).
+This is an accounting, not a proof of a rate bound for all inputs.
+
+The same review showed that PAL3 12/36 — the previous deliverable — misses a flags deadline on
+`a^94 b a^266 b a^94` and two similar words, answering correctly only by reading a stale result of an earlier
+stage generation (and accepting the non-palindrome `a^129 b a^94`). PAL3 needs 12/40 (the rate of PAL2):
+`lps-profile pal3 12 40 adversarial 400` → 495 words, 0 violations. The 12/36 grammars were removed from `out/`.
+
 ## Final table
 
 | variant | N | rhs nodes | max rhs | bytes | colours | rates | warmup / first answer | machine tests | printed PEG tests | proof |
 |---|---:|---:|---:|---:|---:|---|---|---|---|---|
-| baseline PAL3 (`out/pal3-m12-f36.peg.gz`) | 25,510 | 2,361,254 | 894 | 12,410,391 | bits | 12/36 | — | repo (NOTES §6) | repo | unproven |
-| PAL3 + warmup + code (`out/pal3-code-m12-f36.peg.gz`) | 14,819 | 739,084 | 793 | 4,083,371 | 36 | 12/36 | W0 = 64 / n = 128 | interpreter: all words ≤ 10, 100 random ≤ 513, boundary 127–257 and structured ≤ 260 without deadline/report/reachability violations | PEG = interpreter above the fallback (1/1, W0 = 4, ≤ 10); re-parsed ≤ 9; Scala matcher on 8 boundary words of 127–128; Rust runner on 40 raw words 127–600 | unproven |
-| overlap + old backend (`out/overlap-old-a15-b24.peg.gz`) | 12,048 | 870,025 | 594 | 4,835,137 | bits | 15/24 | — / n = 3 | all words ≤ 10; 300 random ≤ 121; 100 random ≤ 513; 412 switch words ≤ 513 and 122 structured ≤ 513 with no violation (report bit, answering bank, queue order, replay, output) | PEG = interpreter (1/1, 2/3, ≤ 6); PEG = oracle at 15/24 (≤ 5); re-parsed ≤ 9; Rust runner on 40 raw words 127–600 | unproven |
-| **overlap + code** (`out/overlap-code-a15-b24.peg.gz`) | **6,960** | **315,161** | **529** | **1,820,016** | 27 | 15/24 | W0 = 32 / n = 48 | interpreter with minAnchor 32: 412 switch words ≤ 513 and 122 structured ≤ 513 without violations (false below 48 as specified) | PEG = interpreter above the fallback (1/1, W0 = 4, ≤ 10); re-parsed ≤ 9; Scala matcher on 12 boundary words of 47–49; Rust runner on 56 raw words 47–600 | unproven |
+| baseline PAL3 12/36 (main; **invalid**: misses a flags deadline on `a^94 b a^266 b a^94`, accepts `a^129 b a^94`) | 25,510 | 2,361,254 | 894 | 12,410,391 | bits | 12/36 | — | fails the adversarial words | fails | — |
+| PAL3 12/40, old backend (`out/metrics/task3-pal3-m12-f40.json`) | 27,550 | 3,614,066 | 1,222 | 22.3M | bits | 12/40 | — | 495 adversarial words ≤ 400 and the flags-interval/structured words without violation | (not re-exported) | unproven |
+| PAL3 + warmup + code (`out/pal3-code-m12-f40.peg.gz`) | 15,967 | 861,036 | 881 | 4,762,519 | 40 | 12/40 | W0 = 64 / n = 128 | warmup 12/40 W0 = 64: 495 adversarial + 37 boundary words without deadline/report/reachability violations | re-parsed ≤ 9 (12/36 version); Rust runner on 112 adversarial raw words 47–600 | unproven |
+| overlap + old backend (`out/metrics/b2-overlap-old-a19-b28.json`) | 14,955 | 1,256,793 | 694 | 6,969,322 | bits | 19/28 | — / n = 3 | all words ≤ 10; 300 random ≤ 121; 100 random ≤ 513; 788 adversarial ≤ 600, 412 switch ≤ 513, 122 structured ≤ 513 with no violation | PEG = interpreter (1/1, 2/3, ≤ 6); PEG = oracle at 19/28 (≤ 5) | unproven |
+| **overlap + code** (`out/overlap-code-a19-b28.peg.gz`) | **8,336** | **431,165** | **617** | **2,502,032** | 31 | 19/28 | W0 = 32 / n = 48 | interpreter with minAnchor 32: 788 adversarial ≤ 600, 412 switch ≤ 513, 122 structured ≤ 513 without violations (false below 48 as specified) | PEG = interpreter above the fallback (1/1, W0 = 4, ≤ 10); re-parsed ≤ 9; Scala matcher on `b a^k b` and flips at 47–49; Rust runner on 112 adversarial raw words 47–600 | unproven |
 
-(Trie dispatch for the code backend: same N, +31% rhs nodes on PAL3+code; not adopted.)
+Withdrawn rows (in `out/metrics/*a15-b24*.json` and `*m12-f36*.json` for the record only): overlap 15/24
+(6,960 rules with the code backend, 12,048 with the old one) rejects `b a^(n−2) b` at n = 48–52, 64–65, 96–106,
+128–133, 192–199; PAL3 + code 12/36 (14,819 rules) inherits the PAL3 deadline miss.
 
-Rates (`out/metrics/overlap-rate-search.md`): 16/24 and above are clean on every family; 12/18 fails
-(bank A late at its first answering tick on `a^12`); A needs 15 (14 fails), B needs 23–24 (22 fails on one
-structured word; 23 was not run on the random families). These are observed minima on the tested inputs,
-not bounds; the backlog on false ticks grows (up to 212 letters on the switch words ≤ 513) and is allowed by
-the specification, the true full matches were always reported in their tick.
-
-Cost structure of the best grammar (compact 6,960): site-code rules 1,405, helpers 54, fallback 50; the
-rest are the two banks' universal steps (15 + 24 copies) and the controller. The next cost item is the copy
-count itself: each U copy still carries its own field rules and dereferences.
+Cost structure of the best grammar (compact 8,336): site-code rules 1,685, helpers 62, fallback 50; the rest
+are the two banks' universal steps (19 + 28 copies) and the controller. The next cost item is the copy
+count itself: each U copy carries its own field rules and dereferences, and the copies are set by the
+start-up cost of the pattern `a^(h−1) b` (about 6 steps per letter in `Kmp2`'s build), not by the steady
+state (3 per letter).
 
 ## What is and is not established
 
 - Mathematically: the overlap identity (§4.1 of the plan) and the anchor coverage; the EOF-code algebra of
-  appendix A (ported to `SiteCodeSuite`).
-- By finite tests (this repository): the machines' outputs against the oracle, the printed PEGs against the
-  interpreter, the oracle and the Rust runner, the deadline and queue-order checks listed above.
-- Not established: a general rate bound for the two banks (the plan's potential argument), totality of the
-  printed PEG beyond the structural argument (helpers are consuming recursion; every same-position reference
-  goes to an earlier allocation site of the same slot or to a rule of a lower layer), and any Lean statement.
+  appendix A (ported to `SiteCodeSuite`); the start-up accounting above as an explicit sum of unit costs.
+- By finite tests (this repository): the machines' outputs against the oracle on the families listed, the
+  printed PEGs against the interpreter, the oracle and the Rust runner, the deadline and queue-order checks.
+- Not established: a rate bound for all inputs (the accounting assumes the per-letter costs of `Kmp2`'s
+  build are the worst case; the adversarial family realises them, other patterns were not searched
+  exhaustively), totality of the printed PEG beyond the structural argument (helpers are consuming
+  recursion; every same-position reference goes to an earlier allocation site of the same slot or to a rule
+  of a lower layer), and any Lean statement.
 
 ## Reproduce
 
 ```sh
 cd research   # under WSL2: XDG_RUNTIME_DIR=/tmp/xdg-1000 sbt
 sbt test
-sbt "run lps-code sizes overlap 15 24"                                  # colours 27, W0 32, first answer 48
-sbt "run overlap-profile 15 24 switch 513 32" "run overlap-profile 15 24 structured 513 32"
-sbt "run lps-code optimize overlap 15 24 auto out/metrics/ab-overlap-code-a15-b24.json"
-sbt "run lps-code export overlap 15 24 auto out/overlap-code-a15-b24.peg" "run lps-check-file out/overlap-code-a15-b24.peg 9"
-sbt "run lps-code check overlap 15 24 32 <words>"                       # Scala matcher vs oracle on given words
-../runner/target/release/plain-peg-runner out/overlap-code-a15-b24.peg <raw words>
+sbt "run lps-code sizes overlap 19 28"                                  # colours 31, W0 32, first answer 48
+sbt "run overlap-profile 19 28 adversarial 600 32" "run overlap-profile 19 28 switch 513 32" "run overlap-profile 19 28 structured 513 32"
+sbt "run lps-code optimize overlap 19 28 auto out/metrics/ab-overlap-code-a19-b28.json"
+sbt "run lps-code export overlap 19 28 auto out/overlap-code-a19-b28.peg" "run lps-check-file out/overlap-code-a19-b28.peg 9"
+sbt "run lps-code check overlap 19 28 32 <words>"                       # Scala matcher vs oracle on given words
+../runner/target/release/plain-peg-runner out/overlap-code-a19-b28.peg <raw words>
 ```

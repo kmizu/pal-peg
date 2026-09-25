@@ -35,6 +35,14 @@ class OverlapPalSuite extends munit.FunSuite {
     }
   }
 
+  test("the working rate 19/28: no violation on the adversarial start-up words (b a^(n-2) b, a^i b a^j b a^i) up to 200 letters") {
+    val m = OverlapPal.machine(19, 28, 2)
+    for (w <- OverlapProfile.adversarialWords(200)) {
+      val pr = OverlapProfile.profile(m, w, 2)
+      assert(pr.violations.isEmpty, s"'${w.take(40)}' (${w.length}): ${pr.violations.take(3).mkString("; ")}")
+    }
+  }
+
   test("PEG = interpreter with the old backend at 1/1 (all words <= 6) and at 2/3 (all words <= 6)") {
     assertEquals(Lps.checkSim(OverlapPal.machine(1, 1, 2), 6), None)
     assertEquals(Lps.checkSim(OverlapPal.machine(2, 3, 2), 6), None)

@@ -128,6 +128,24 @@ object OverlapProfile {
     len(st.regs.getOrElse(s"m${s}_pendF", null)) + len(st.regs.getOrElse(s"m${s}_pendB", null)) + len(st.regs.getOrElse(s"m${s}_pendN", null))
   }
 
+  /** adversarial words for the start-up of a bank: `b a^(n-2) b` at every length (the bank whose first answer is n has
+    * the pattern a^(h-1) b: the most expensive table build and a full-chain back-up on the last letter), and
+    * `a^i b a^j b a^i` with the b's near the anchors (long runs inside the pattern and the text) */
+  def adversarialWords(maxLen: Int): Vector[String] = {
+    val ws = Vector.newBuilder[String]
+    for (n <- 3 to maxLen) { ws += "b" + "a" * (n - 2) + "b" }
+    var w = 2
+    while (3 * w <= maxLen) {
+      for (n <- Vector(3 * w / 2, 2 * w, 3 * w, 3 * w / 2 + 1, 2 * w + 1) if n <= maxLen; i <- Vector(1, w / 4, w / 2, w - 1) if i >= 1 && 2 * i + 2 <= n) {
+        val j = n - 2 * i - 2
+        ws += "a" * i + "b" + "a" * j + "b" + "a" * i
+        ws += "a" * i + "b" + "a" * j + "b" + "a" * (i - 1) + "b"    // the same with the last letter flipped
+      }
+      w *= 2
+    }
+    ws.result().distinct
+  }
+
   /** words around the bank switches: for W = 2..maxW, n in {3W/2, 2W, 3W} +- 1: palindromes, a^n, a^(n-1) b,
     * (ab)*, small-period palindromes, and one flip at the read positions t0-1, t0, h-1, h, n-h-1, n-h */
   def switchWords(maxLen: Int): Vector[String] = {

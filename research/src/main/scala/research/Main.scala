@@ -341,7 +341,7 @@ object Main {
     case "lps-profile" :: which :: rest =>
       // lps-profile pal3 <m> <f> <word>  |  lps-profile pal3 <m> <f> structured <maxLen>: jobs, units, deadline checks
       val m = palMachine(s"lps-$which", rest(0).toInt, rest(1).toInt)
-      val words = if (rest(2) == "structured") { LpsProfile.structuredWords(rest(3).toInt) } else { Vector(rest(2)) }
+      val words = rest(2) match { case "structured" => LpsProfile.structuredWords(rest(3).toInt); case "adversarial" => LpsProfile.adversarialWords(rest(3).toInt); case w => Vector(w) }
       var bad = 0
       var maxUnits = 0
       for (w <- words) {
@@ -469,7 +469,7 @@ object Main {
         case "profile" =>
           val (ms, fs, w0) = (rest(0).toInt, rest(1).toInt, rest(2).toInt)
           val m = LpsWarmup.machine(ms, fs, w0)
-          val words = if (rest(3) == "boundary") { LpsWarmup.boundaryWords(w0) } else { LpsProfile.structuredWords(rest(4).toInt) }
+          val words = rest(3) match { case "boundary" => LpsWarmup.boundaryWords(w0); case "adversarial" => LpsProfile.adversarialWords(rest(4).toInt); case _ => LpsProfile.structuredWords(rest(4).toInt) }
           var bad = 0
           for (w <- words) {
             val pr = LpsProfile.profile(m, w, 2 * w0)
@@ -485,6 +485,7 @@ object Main {
       val (words, minAnchor) = rest(2) match {
         case "structured" => (LpsProfile.structuredWords(rest(3).toInt), rest.lift(4).map(_.toInt).getOrElse(2))
         case "switch" => (OverlapProfile.switchWords(rest(3).toInt), rest.lift(4).map(_.toInt).getOrElse(2))
+        case "adversarial" => (OverlapProfile.adversarialWords(rest(3).toInt), rest.lift(4).map(_.toInt).getOrElse(2))
         case w => (Vector(w), rest.lift(3).map(_.toInt).getOrElse(2))
       }
       val m = OverlapPal.machine(a, b, minAnchor)

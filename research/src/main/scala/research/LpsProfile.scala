@@ -127,6 +127,22 @@ object LpsProfile {
     ws.result().distinct
   }
 
+  /** adversarial words for the workers' start-up (see OverlapProfile.adversarialWords): `b a^(n-2) b` at every length up
+    * to maxLen and `a^i b a^j b a^i` around the powers of two */
+  def adversarialWords(maxLen: Int): Vector[String] = {
+    val ws = Vector.newBuilder[String]
+    for (n <- 3 to maxLen) { ws += "b" + "a" * (n - 2) + "b" }
+    var w = 4
+    while (2 * w <= maxLen) {
+      for (n <- Vector(2 * w, 2 * w + 1, 3 * w, 4 * w - 1, 4 * w) if n <= maxLen; i <- Vector(1, w / 4, w / 2, w - 1) if i >= 1 && 2 * i + 2 <= n) {
+        val j = n - 2 * i - 2
+        ws += "a" * i + "b" + "a" * j + "b" + "a" * i
+      }
+      w *= 2
+    }
+    ws.result().distinct
+  }
+
   /** words aimed at the flags interval of a stage of width W (born at tick W, half S = W/2): the machine reads
     * rd = p ++ y ++ z with |p| = W, |y| = (r+1)S, and y chosen so that its longest palindromic prefix L is
     * below, at, or above lo = rS, on a chain node or inside a gap (review finding 2) */

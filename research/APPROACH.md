@@ -6,17 +6,19 @@ construction, DESIGN.md in the author's notes). It says what was built, what was
 grammar is still about 5× above the target, and which questions are open. The numbers in
 [`NOTES.md`](NOTES.md) §4–§5 are the primary record; this note is the map.
 
-**Status in one line (2026-09-25, evening).** A plain PEG for the binary palindromes with **6,960 rules**
-(315,161 right-hand-side nodes, 1.82 MB): two KMP matcher banks on overlapping anchors (no flags worker,
-`OverlapPal`, 15 + 24 universal steps per letter) compiled by the site-code backend (`LpsCode`: a pointer's
-allocation site as an EOF-anchored second extent, 27 colours, machine answers from n = 48, a bounded
-fallback below), compacted by `PegOptimize`; correct on all words ≤ 10, on switch and structured words up to
-513 letters in the interpreter (report bits, queue order, output), PEG = interpreter, re-parsed and checked
-against the oracle, Rust runner correct on raw words up to 600 letters (`out/overlap-code-a15-b24.peg.gz`).
-Before this: 25,510 rules (`LpsPal3`, morning), 33,019 (`LpsPal2`), 3.1M (the proof's generator).
-[`BREAKTHROUGH.md`](BREAKTHROUGH.md) has the design and the final table, [`NOTES.md`](NOTES.md) §7 the
-step-by-step numbers. The sections below describe the pipeline as of the 25,510-rule grammar; the new
-backend and recognizer are documented in `BREAKTHROUGH.md`.
+**Status in one line (2026-09-25, night).** A plain PEG for the binary palindromes with **8,336 rules**
+(431,165 right-hand-side nodes, 2.50 MB): two KMP matcher banks on overlapping anchors (no flags worker,
+`OverlapPal`, 19 + 28 universal steps per letter — the start-up cost of the pattern `a^(h−1) b`) compiled by
+the site-code backend (`LpsCode`: a pointer's allocation site as an EOF-anchored second extent, 31 colours,
+machine answers from n = 48, a bounded fallback below), compacted by `PegOptimize`; correct on all words ≤ 10,
+on adversarial (`b a^(n−2) b`, `a^i b a^j b a^i`), switch and structured words up to 600 letters in the
+interpreter, PEG = interpreter, re-parsed and checked against the oracle, Rust runner correct on 112
+adversarial raw words up to 600 letters (`out/overlap-code-a19-b28.peg.gz`). The earlier 25,510-rule PAL3
+grammar (12/36) turned out to miss a flags deadline on those adversarial words; PAL3 needs 12/40 (27,550
+rules with the old backend, 15,967 with the site codes). [`BREAKTHROUGH.md`](BREAKTHROUGH.md) has the
+design, the checks and the final table, [`NOTES.md`](NOTES.md) §6–§7 the step-by-step numbers and the
+correction. The sections below describe the pipeline as of the PAL3 grammar; the new backend and recognizer
+are documented in `BREAKTHROUGH.md`.
 
 ## 1. The pipeline
 
