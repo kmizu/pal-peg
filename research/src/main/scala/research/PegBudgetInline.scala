@@ -24,7 +24,10 @@ object PegBudgetInline {
     * substitution; `protect`: never eliminated (the start rule never is) */
   final case class Options(nodeBudget: Long, byteBudget: Long = Long.MaxValue, maxRhs: Int = Int.MaxValue,
                            priority: Priority = Nodes, protect: Set[String] = Set())
-  final case class Result(grammar: Grammar, eliminated: Vector[String], nodes: Long, bytesEstimate: Long)
+  /** `trace`: after each elimination, (rules left, total rhs nodes, byte estimate). With a fixed `maxRhs` the eliminations
+    * under a smaller node budget are a prefix of those under a larger one (the cheapest candidate is taken first, and if it
+    * does not fit, no candidate does), so one run with the largest budget gives the whole N-versus-nodes curve. */
+  final case class Result(grammar: Grammar, eliminated: Vector[String], nodes: Long, bytesEstimate: Long, trace: Vector[(Int, Long, Long)] = Vector())
 
   /** occurrences of every referenced rule in `e` */
   def occurrences(e: Expr): Map[String, Int] = {
@@ -70,6 +73,7 @@ object PegBudgetInline {
     var totalBytes = order.map(n => utf8(n) + bytes(n) + 5).sum
     val live = mutable.LinkedHashSet(order*)
     val gone = Vector.newBuilder[String]
+    val trace = Vector.newBuilder[(Int, Long, Long)]
     def uses(r: String): Long = useCount.getOrElse(r, 0L)
     def deltas(r: String): (Long, Long) = {
       val u = uses(r)
@@ -122,8 +126,9 @@ object PegBudgetInline {
           totalNodes += dn
           totalBytes += db
           gone += r
+          trace += ((live.size, totalNodes, totalBytes))
       }
     }
-    Result(new Grammar(order.filter(live).map(n => (n, body(n)))), gone.result(), totalNodes, totalBytes)
+    Result(new Grammar(order.filter(live).map(n => (n, body(n)))), gone.result(), totalNodes, totalBytes, trace.result())
   }
 }

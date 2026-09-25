@@ -183,3 +183,10 @@ Roughly: `rules ≈ Σ_copies (nodes of the step + pointers × log₂ copies)`.
 ## Status 2026-09-25 (under-1000 plan)
 
 The gap matcher (`GapKmp.scala`, plan §4 in its amortised form) replaces `Kmp2` in the overlap banks: 5,902 rules at rates 10/13 (`UNDER1000.md`); the budgeted inliner (`PegBudgetInline.scala`) trades rules for rhs nodes down to the recursive core (≈ 46 rules per layer). N < 1,000 was not reached; `UNDER1000.md` §5 quantifies the floor.
+
+## Status 2026-09-25 (pools plan)
+
+`RolePal.scala` (young/old register sets with a handover at every birth) at 15/4 with the size options of `POOLS.md` §4.2:
+4,216 rules compact, **999 rules after budgeted inlining** (×9.75 nodes, 8.0 MB; 1,377 at ×2). The 10/13 grammar of
+`UNDER1000.md` answers false on a palindrome of 128 letters; the corrected per-bank rate is 10/14 (6,177 rules).
+

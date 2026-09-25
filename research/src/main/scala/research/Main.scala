@@ -4,7 +4,7 @@ package research
 object Main {
   /** the PAL machine of a command family: `lps-pal2-*` → LpsPal2, `lps-pal3-*` → LpsPal3 */
   def palMachine(cmd: String, m: Int, f: Int): Lps.Machine =
-    if (cmd.contains("gap")) { OverlapPal.machine(m, f, 2, OverlapPal.GapCore) } else if (cmd.contains("overlap")) { OverlapPal.machine(m, f, 2) } else if (cmd.contains("pal3")) { LpsPal3.machine(m, f) } else { LpsPal2.machine(m, f) }
+    if (cmd.contains("role")) { RolePal.machine(m, f, 2) } else if (cmd.contains("gap")) { OverlapPal.machine(m, f, 2, OverlapPal.GapCore) } else if (cmd.contains("overlap")) { OverlapPal.machine(m, f, 2) } else if (cmd.contains("pal3")) { LpsPal3.machine(m, f) } else { LpsPal2.machine(m, f) }
   def main(args: Array[String]): Unit = args.toList match {
     case "sanity" :: _ =>
       val anbn = Grammar.parse("S = \"a\" S \"b\" / \"\";")
@@ -168,7 +168,7 @@ object Main {
       val fg = rest.drop(2).headOption.map(_.toInt).getOrElse(1)
       val fu = rest.drop(3).headOption.map(_.toInt).getOrElse(0)
       println(Lps.checkSim(LpsPal.machine(mg, fg, fu), maxLen).getOrElse(s"ok: slot PAL PEG agrees with the interpreter on all words of length <= $maxLen (mGroups=$mg, fGroups=$fg, fusion=$fu)"))
-    case cmd :: rest if cmd == "lps-pal2-sim" || cmd == "lps-pal3-sim" || cmd == "lps-overlap-sim" || cmd == "lps-gap-sim" =>
+    case cmd :: rest if cmd == "lps-pal2-sim" || cmd == "lps-pal3-sim" || cmd == "lps-overlap-sim" || cmd == "lps-gap-sim" || cmd == "lps-role-sim" =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(8)
       val ms = rest.drop(1).headOption.map(_.toInt).getOrElse(6)
       val fs = rest.drop(2).headOption.map(_.toInt).getOrElse(24)
@@ -186,7 +186,7 @@ object Main {
         }
       }
       println(bad.getOrElse(s"ok: $cmd (mSteps=$ms, fSteps=$fs, budget=${m.budget}) agrees on all $count words of length <= $maxLen"))
-    case cmd :: rest if cmd == "lps-pal2-rand" || cmd == "lps-pal3-rand" || cmd == "lps-overlap-rand" || cmd == "lps-gap-rand" =>
+    case cmd :: rest if cmd == "lps-pal2-rand" || cmd == "lps-pal3-rand" || cmd == "lps-overlap-rand" || cmd == "lps-gap-rand" || cmd == "lps-role-rand" =>
       val n = rest.headOption.map(_.toInt).getOrElse(200)
       val len = rest.drop(1).headOption.map(_.toInt).getOrElse(64)
       val ms = rest.drop(2).headOption.map(_.toInt).getOrElse(6)
@@ -293,6 +293,7 @@ object Main {
         case "pal3" => (LpsPal3.machine(rest(0).toInt, rest(1).toInt), s"pal3 ${rest(0)}/${rest(1)}", Seq("machine_variant" -> "LpsPal3", "mSteps" -> rest(0), "fSteps" -> rest(1)))
         case "overlap" => (OverlapPal.machine(rest(0).toInt, rest(1).toInt, 2), s"overlap ${rest(0)}/${rest(1)}", Seq("machine_variant" -> "OverlapPal", "mSteps" -> rest(0), "fSteps" -> rest(1)))
         case "gap" => (OverlapPal.machine(rest(0).toInt, rest(1).toInt, 2, OverlapPal.GapCore), s"gap ${rest(0)}/${rest(1)}", Seq("machine_variant" -> "OverlapPal+GapKmp", "mSteps" -> rest(0), "fSteps" -> rest(1)))
+        case "role" => (RolePal.machine(rest(0).toInt, rest(1).toInt, 2), s"role ${rest(0)}/${rest(1)}", Seq("machine_variant" -> "RolePal", "mSteps" -> rest(0), "fSteps" -> rest(1)))
         case _ => (LpsPal2.machine(rest(0).toInt, rest(1).toInt), s"pal2 ${rest(0)}/${rest(1)}", Seq("machine_variant" -> "LpsPal2", "mSteps" -> rest(0), "fSteps" -> rest(1)))
       }
       val out = rest.last
@@ -314,6 +315,7 @@ object Main {
         case "pal3" => (LpsPal3.machine(args(0).toInt, args(1).toInt), s"pal3 ${args(0)}/${args(1)}", Seq("machine_variant" -> "LpsPal3", "mSteps" -> args(0), "fSteps" -> args(1)))
         case "overlap" => (OverlapPal.machine(args(0).toInt, args(1).toInt, 2), s"overlap ${args(0)}/${args(1)}", Seq("machine_variant" -> "OverlapPal", "mSteps" -> args(0), "fSteps" -> args(1)))
         case "gap" => (OverlapPal.machine(args(0).toInt, args(1).toInt, 2, OverlapPal.GapCore), s"gap ${args(0)}/${args(1)}", Seq("machine_variant" -> "OverlapPal+GapKmp", "mSteps" -> args(0), "fSteps" -> args(1)))
+        case "role" => (RolePal.machine(args(0).toInt, args(1).toInt, 2), s"role ${args(0)}/${args(1)}", Seq("machine_variant" -> "RolePal", "mSteps" -> args(0), "fSteps" -> args(1)))
         case _ => (LpsPal2.machine(args(0).toInt, args(1).toInt), s"pal2 ${args(0)}/${args(1)}", Seq("machine_variant" -> "LpsPal2", "mSteps" -> args(0), "fSteps" -> args(1)))
       }
       val out = args.last
@@ -335,7 +337,7 @@ object Main {
       // lps-export kmp2 <n> <path> [inline] | lps-export pal2 <m> <f> <path> [inline]: the compacted grammar, to a file
       val inl = rest.contains("inline")
       val args = rest.filter(_ != "inline")
-      val m = which match { case "kmp2" => LpsKmp2.machine(args(0).toInt); case "pal3" => LpsPal3.machine(args(0).toInt, args(1).toInt); case "overlap" => OverlapPal.machine(args(0).toInt, args(1).toInt, 2); case "gap" => OverlapPal.machine(args(0).toInt, args(1).toInt, 2, OverlapPal.GapCore); case _ => LpsPal2.machine(args(0).toInt, args(1).toInt) }
+      val m = which match { case "kmp2" => LpsKmp2.machine(args(0).toInt); case "pal3" => LpsPal3.machine(args(0).toInt, args(1).toInt); case "overlap" => OverlapPal.machine(args(0).toInt, args(1).toInt, 2); case "gap" => OverlapPal.machine(args(0).toInt, args(1).toInt, 2, OverlapPal.GapCore); case "role" => RolePal.machine(args(0).toInt, args(1).toInt, 2); case _ => LpsPal2.machine(args(0).toInt, args(1).toInt) }
       val r = PegOptimize.compact(Lps.compile(m), PegOptimize.Options(inlineSingleUse = inl))
       java.nio.file.Files.write(java.nio.file.Paths.get(args.last), r.grammar.render.getBytes("UTF-8"))
       val (n, sz) = r.grammar.size
@@ -371,6 +373,49 @@ object Main {
         val bits = st.bits.toVector.sorted.filter(b => re.findFirstIn(b).isDefined).mkString(" ")
         val regs = st.regs.toVector.sortBy(_._1).filter { case (n, c) => c != null && re.findFirstIn(n).isDefined }.map { case (n, c) => s"$n=t${c.tag}@${c.layer}" }.mkString(" ")
         println(s"tick $tick $slot: $bits | $regs")
+      }
+    case "lps-inline-curve" :: path :: maxFactorS :: maxRhsS :: outMd :: rest =>
+      // lps-inline-curve <in.peg> <maxFactor> <maxRhs> <out.md> [<N> <out.peg> <out.json>]: one greedy PegBudgetInline run
+      // with the node budget maxFactor x the compacted input; the N reached at node factors 1 .. maxFactor; optionally the
+      // first grammar of the run with fewer than N rules is rebuilt (the same run stopped at its node total) and exported
+      val text = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path)), "UTF-8")
+      val g = PegOptimize.compact(Grammar.parse(text)).grammar
+      val before = PegMetrics.of(g, PegMetrics.componentOfName)
+      val maxRhs = maxRhsS.toInt
+      val t0 = System.nanoTime()
+      val r = PegBudgetInline.inline(g, PegBudgetInline.Options(nodeBudget = (before.rhsNodes * maxFactorS.toDouble).toLong, maxRhs = maxRhs))
+      val secs = (System.nanoTime() - t0) / 1e9
+      val factors = Vector(1.0, 1.25, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0).filter(_ <= maxFactorS.toDouble)
+      val rows = factors.map { f =>
+        val cap = (before.rhsNodes * f).toLong
+        val last = r.trace.takeWhile(_._2 <= cap).lastOption.getOrElse((before.rules, before.rhsNodes, before.renderedUtf8Bytes))
+        f"| x$f%.2f | ${last._1} | ${last._2} | ${last._3} |"
+      }
+      val firstBelow = (n: Int) => r.trace.find(_._1 < n)
+      val md = s"# PegBudgetInline curve of `$path` (maxRhs $maxRhs)\n\nOne greedy run (the eliminations under a smaller node budget are a prefix of those under a larger one). " +
+        s"Input: ${before.rules} rules, ${before.rhsNodes} rhs nodes, ${before.renderedUtf8Bytes} bytes. Final: ${r.grammar.rules.size} rules, ${r.nodes} nodes (${f"$secs%.0f"} s).\n\n" +
+        "| node budget | N | rhs nodes | byte estimate |\n|---|---:|---:|---:|\n" + rows.mkString("\n") + "\n" +
+        Vector(1000, 1100, 1200).map(n => firstBelow(n).map { case (k, nodes, bytes) => s"\nfirst N < $n: $k rules at $nodes nodes (x${f"${nodes.toDouble / before.rhsNodes}%.2f"}), byte estimate $bytes" }.getOrElse(s"\nN < $n not reached")).mkString + "\n"
+      java.nio.file.Files.write(java.nio.file.Paths.get(outMd), md.getBytes("UTF-8"))
+      println(md)
+      rest match {
+        case nS :: outPeg :: outJson :: _ =>
+          val idx = r.trace.indexWhere(_._1 < nS.toInt)
+          if (idx >= 0) {
+            val nodes = r.trace.take(idx + 1).map(_._2).max   // the budget under which the same greedy run reaches this point
+            val r2 = PegBudgetInline.inline(g, PegBudgetInline.Options(nodeBudget = nodes, maxRhs = maxRhs))
+            val after = PegMetrics.of(r2.grammar, PegMetrics.componentOfName)
+            val rendered = r2.grammar.render
+            java.nio.file.Files.write(java.nio.file.Paths.get(outPeg), rendered.getBytes("UTF-8"))
+            val sha = java.security.MessageDigest.getInstance("SHA-256").digest(rendered.getBytes("UTF-8")).map(b => f"${b & 0xff}%02x").mkString
+            val commit = scala.sys.process.Process(Seq("git", "rev-parse", "--short", "HEAD")).!!.trim
+            val json = after.json(Seq("source_file" -> path, "source_commit" -> commit, "pass" -> "PegOptimize.compact+PegBudgetInline",
+              "node_budget" -> nodes.toString, "max_rhs_budget" -> maxRhs.toString, "N_before" -> before.rules.toString,
+              "rhs_nodes_before" -> before.rhsNodes.toString, "bytes_before" -> before.renderedUtf8Bytes.toString, "sha256_uncompressed" -> sha))
+            java.nio.file.Files.write(java.nio.file.Paths.get(outJson), json.getBytes("UTF-8"))
+            println(PegMetrics.markdownHeader); println(after.markdownRow(s"inline to N < $nS")); println(s"sha256 $sha")
+          }
+        case _ => ()
       }
     case "lps-inline-sweep" :: path :: outDir :: rest =>
       // lps-inline-sweep <in.peg> <outDir> [preset-xfactor-rmaxRhs ...]: the Pareto table of PegBudgetInline on one grammar
@@ -455,14 +500,24 @@ object Main {
       //          | peg <kind> <maxLen> <m> <f> <W0> [trie] | check <kind> <m> <f> <W0> <words...> [trie]
       // pal3: LpsWarmup.machine(m, f, W0), fallback below 2 W0; overlap: OverlapPal.machine(a, b, W0), fallback below 3 W0 / 2
       val trie = rest.contains("trie")
-      val args = rest.filter(_ != "trie")
-      val isOverlap = kind == "overlap" || kind == "gap"
+      // role options: noacc (no young acc), tmp (rv/ks merged), fuse (first old and young steps fused into IN)
+      val roleFlags = Set("noacc", "tmp", "fuse", "compact", "rk", "endent", "endonce", "p3")
+      val ropts = RolePal.Options(youngReport = !rest.contains("noacc"), mergeTmp = rest.contains("tmp"), fuseIn = rest.contains("fuse"), compact = rest.contains("compact"),
+        sharedRK = rest.contains("rk"), endAsEntry = rest.contains("endent"), endOnce = rest.contains("endonce"), rearInP3 = rest.contains("p3"))
+      val args = rest.filter(x => x != "trie" && !roleFlags(x))
+      val isOverlap = kind == "overlap" || kind == "gap" || kind == "role"
       val coreKind: OverlapPal.CoreKind = if (kind == "gap") { OverlapPal.GapCore } else { OverlapPal.Kmp2Core }
-      def mk(ms: Int, fs: Int, w0: Int): Lps.Machine = if (isOverlap) { OverlapPal.machine(ms, fs, w0, coreKind) } else { LpsWarmup.machine(ms, fs, w0) }
+      def mk(ms: Int, fs: Int, w0: Int): Lps.Machine =
+        if (kind == "role") { RolePal.machine(ms, fs, w0, ropts) } else if (isOverlap) { OverlapPal.machine(ms, fs, w0, coreKind) } else { LpsWarmup.machine(ms, fs, w0) }
       def firstAnswer(w0: Int): Int = if (isOverlap) { OverlapPal.firstAnswer(w0) } else { LpsWarmup.firstAnswer(w0) }
       def opts(w0: Int) = LpsCode.Options(fallbackBelow = Some(firstAnswer(w0)), minBirth = w0, dispatch = if (trie) { LpsCode.Trie } else { LpsCode.Direct })
       def colours(ms: Int, fs: Int): Int = LpsCode.compileMeta(mk(ms, fs, 2)).coloring.count
-      def w0Of(ms: Int, fs: Int, spec: String): Int = if (spec == "auto") { SiteCode.nextPow2(math.max(colours(ms, fs), 2)) } else { spec.toInt }
+      // W0: "auto" = the power of two >= colours; "auto3" = the smallest 3 * 2^k (k >= 2) >= colours (a base-3 clock, RolePal)
+      def w0Of(ms: Int, fs: Int, spec: String): Int = spec match {
+        case "auto" => SiteCode.nextPow2(math.max(colours(ms, fs), 2))
+        case "auto3" => { val c = colours(ms, fs); Iterator.iterate(12)(_ * 2).find(_ >= c).get }
+        case x => x.toInt
+      }
       sub match {
         case "sizes" =>
           val c = colours(args(0).toInt, args(1).toInt)
@@ -490,7 +545,7 @@ object Main {
             val fallbackRules = kept.count(n => res.meta.get(n).exists(_.slot == "fallback"))
             val commit = scala.sys.process.Process(Seq("git", "rev-parse", "--short", "HEAD")).!!.trim
             val variant = if (trie) { "LpsCode+trie+compact" } else { "LpsCode+direct+compact" }
-            val json = after.json(Seq("machine_variant" -> (if (kind == "gap") { "OverlapPal+GapKmp" } else if (isOverlap) { "OverlapPal" } else { "LpsWarmup(PAL3)" }), "compiler_variant" -> variant,
+            val json = after.json(Seq("machine_variant" -> (if (kind == "role") { "RolePal" } else if (kind == "gap") { "OverlapPal+GapKmp" } else if (isOverlap) { "OverlapPal" } else { "LpsWarmup(PAL3)" }), "compiler_variant" -> variant,
               "mSteps" -> ms.toString, "fSteps" -> fs.toString, "source_commit" -> commit, "generation_seconds" -> f"$gen%.2f",
               "site_color_count" -> res.coloring.count.toString, "warmup_W0" -> w0.toString, "first_answer" -> firstAnswer(w0).toString,
               "site_code_rules" -> codeRules.toString, "helper_rules" -> helperRules.toString, "fallback_rules" -> fallbackRules.toString,
@@ -545,29 +600,72 @@ object Main {
           println(s"${words.size} words, $bad with violations")
         case _ => println("unknown lps-warmup subcommand")
       }
+    case "pool-grid" :: minAnchorS :: advS :: switchS :: structS :: randCountS :: randMaxS :: threadsS :: configs =>
+      // pool-grid <minAnchor> <adversarial maxLen> <switch maxLen> <structured maxLen> <random count> <random maxLen> <threads> a/b/old ...
+      // the pools plan's rate grid on the old-limit model (OverlapPal gap core; old = 0 means no limit, strict handover check
+      // when limited); per configuration pass/fail, the first violating word and the demand summary
+      val minAnchor = minAnchorS.toInt
+      // an optional "seed=<n>" among the configurations: the seed of the random words (default 21)
+      val seed = configs.collectFirst { case x if x.startsWith("seed=") => x.drop(5).toLong }.getOrElse(21L)
+      val families = Vector("random" -> OverlapProfile.randomWords(randCountS.toInt, randMaxS.toInt, seed), "adversarial" -> OverlapProfile.adversarialWords(advS.toInt),
+        "switch" -> OverlapProfile.switchWords(switchS.toInt), "structured" -> LpsProfile.structuredWords(structS.toInt))
+      for (cfg <- configs if !cfg.startsWith("seed=")) {
+        // a/b/old: the old-limit model; r<ky>/<ko>: the role machine
+        val t0 = System.nanoTime()
+        val r = if (cfg.startsWith("r")) {
+          // r<ky>/<ko>[:flag,flag] with the role options noacc, tmp, fuse
+          val (sizes, flags) = cfg.drop(1).split(":", 2) match { case Array(a) => (a, Set.empty[String]); case Array(a, f) => (a, f.split(",").toSet) }
+          val Array(ky, ko) = sizes.split("/").map(_.toInt)
+          val ro = RolePal.Options(youngReport = !flags("noacc"), mergeTmp = flags("tmp"), fuseIn = flags("fuse"), compact = flags("compact"),
+            sharedRK = flags("rk"), endAsEntry = flags("endent"), endOnce = flags("endonce"), rearInP3 = flags("p3"))
+          OverlapProfile.grid(cfg, RolePal.machine(ky, ko, minAnchor, ro), minAnchor, true, families, threadsS.toInt, OverlapProfile.Roles, ro.fuseIn)
+        } else {
+          val Array(a, b, o) = cfg.split("/").map(_.toInt)
+          val limit = if (o <= 0) { Int.MaxValue } else { o }
+          OverlapProfile.grid(cfg, OverlapPal.machine(a, b, minAnchor, OverlapPal.GapCore, limit), minAnchor, limit < Int.MaxValue, families, threadsS.toInt)
+        }
+        val secs = (System.nanoTime() - t0) / 1e9
+        val verdict = if (r.pass) { s"PASS (${r.words} words)" } else { s"FAIL after ${r.words} words: ${r.firstBad.map { case (w, v) => s"${w.take(60)}${if (w.length > 60) "…" else ""} [len ${w.length - w.indexOf(": ") - 2}] $v" }.getOrElse("")}" }
+        println(f"grid $cfg minAnchor $minAnchor: $verdict ($secs%.0f s)")
+        if (r.pass) { println(s"  ${r.demand.summary}") }
+        r.firstBad.foreach { case (w, _) => java.nio.file.Files.write(java.nio.file.Paths.get(s"/tmp/pool-grid-bad-${cfg.replace('/', '-')}.txt"), (w.drop(w.indexOf(": ") + 2) + "\n").getBytes("UTF-8")) }
+      }
     case "overlap-profile" :: rest0 =>
       // overlap-profile <a> <b> <word> [minAnchor] [gap] | overlap-profile <a> <b> structured|switch|adversarial <maxLen> [minAnchor] [gap]
-      val rest = rest0.filterNot(_ == "gap")
+      // an optional "old=<k>": the answering bank runs only its first k copies per tick (the pools plan's small old pool)
+      val oldLimit = rest0.collectFirst { case x if x.startsWith("old=") => x.drop(4).toInt }.getOrElse(Int.MaxValue)
+      // an optional "dump=<path>": the violating words, one per line
+      val dump = rest0.collectFirst { case x if x.startsWith("dump=") => x.drop(5) }
+      val role = rest0.contains("role")
+      val rest = rest0.filterNot(x => x == "gap" || x == "role" || x.startsWith("old=") || x.startsWith("dump="))
+      val dumped = Vector.newBuilder[String]
       val coreKind: OverlapPal.CoreKind = if (rest0.contains("gap")) { OverlapPal.GapCore } else { OverlapPal.Kmp2Core }
       val (a, b) = (rest(0).toInt, rest(1).toInt)
       val (words, minAnchor) = rest(2) match {
         case "structured" => (LpsProfile.structuredWords(rest(3).toInt), rest.lift(4).map(_.toInt).getOrElse(2))
         case "switch" => (OverlapProfile.switchWords(rest(3).toInt), rest.lift(4).map(_.toInt).getOrElse(2))
         case "adversarial" => (OverlapProfile.adversarialWords(rest(3).toInt), rest.lift(4).map(_.toInt).getOrElse(2))
+        case "random" => (OverlapProfile.randomWords(rest(3).toInt, rest(4).toInt), rest.lift(5).map(_.toInt).getOrElse(2))
         case w => (Vector(w), rest.lift(3).map(_.toInt).getOrElse(2))
       }
-      val m = OverlapPal.machine(a, b, minAnchor, coreKind)
+      val m = if (role) { RolePal.machine(a, b, minAnchor) } else { OverlapPal.machine(a, b, minAnchor, coreKind, oldLimit) }
+      val layout = if (role) { OverlapProfile.Roles } else { OverlapProfile.Banks }
       var bad = 0
       var maxUnits = 0
       var maxBacklog = 0
+      var demand = OverlapProfile.Demand()
       for (w <- words) {
-        val pr = OverlapProfile.profile(m, w, minAnchor)
+        val pr = OverlapProfile.profile(m, w, minAnchor, role || oldLimit < Int.MaxValue, layout)
+        demand = demand.merge(pr.demand)
         maxUnits = math.max(maxUnits, pr.maxUnitsPerTick)
         maxBacklog = math.max(maxBacklog, pr.lives.map(_.maxBacklog).maxOption.getOrElse(0))
         if (words.size == 1) { println(pr.table) }
+        if (pr.violations.nonEmpty) { dumped += w }
         if (pr.violations.nonEmpty) { bad += 1; if (bad <= 5) { println(s"'${w.take(40)}${if (w.length > 40) "..." else ""}' (${w.length}): " + pr.violations.take(3).mkString("; ")) } }
       }
-      println(s"overlap${if (coreKind == OverlapPal.GapCore) "+gap" else ""} $a/$b minAnchor $minAnchor: ${words.size} words, $bad with violations, max units in a tick $maxUnits, max backlog $maxBacklog")
+      println(s"overlap${if (role) "+role" else if (coreKind == OverlapPal.GapCore) "+gap" else ""}${if (oldLimit < Int.MaxValue) s" old<=$oldLimit" else ""} $a/$b minAnchor $minAnchor: ${words.size} words, $bad with violations, max units in a tick $maxUnits, max backlog $maxBacklog")
+      println(demand.summary)
+      dump.foreach(p => java.nio.file.Files.write(java.nio.file.Paths.get(p), dumped.result().mkString("", "\n", "\n").getBytes("UTF-8")))
     case "lps-kmp2" :: rest =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
       val n = rest.drop(1).headOption.map(_.toInt).getOrElse(6)

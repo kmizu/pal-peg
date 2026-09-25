@@ -48,13 +48,21 @@ object OverlapPal {
 
   val ctlRegs: Vector[(String, Set[K])] = Vector("pw" -> Set(KInp), "nb" -> Set(KInp), "clk" -> Set(KInp))
   /** dj_1 .. dj_{log2 minAnchor - 1}: the dyadic-birth counter that enables the births from W0 on */
-  def djBits(minAnchor: Int): Vector[String] = (1 until Integer.numberOfTrailingZeros(minAnchor)).map(i => s"dj_$i").toVector
+  def djBits(minAnchor: Int): Vector[String] =
+    if (base3(minAnchor)) { (1 until Integer.numberOfTrailingZeros(minAnchor / 3)).map(i => s"dj_$i").toVector }
+    else { (1 until Integer.numberOfTrailingZeros(minAnchor)).map(i => s"dj_$i").toVector }
   def ctlBits(minAnchor: Int): Vector[String] = Vector("sm0", "sm1", "first", "b0", "b1", "out") ++ djBits(minAnchor)
+  /** a minimum anchor 3 * 2^k (k >= 2): the doubling clock starts at tick 3 (dyadic births 6, 12, 24, ...; the pools plan's
+    * W0 = 24 when 21 colours do not need 32) */
+  def base3(minAnchor: Int): Boolean = minAnchor % 3 == 0 && { val q = minAnchor / 3; q >= 4 && (q & (q - 1)) == 0 }
 
   def ct(minAnchor: Int): Prog = {
     val p = new Prog(0, 0, "", exclusive = true)
     val dj = djBits(minAnchor)
-    val dy = And(not(smIs(0)), IsNull(prevIn(Reg("nb"))))
+    val b3 = base3(minAnchor)
+    // base 3: the clock is set at tick 3, so the doubling ticks are 6, 12, 24, ... (nb is null on ticks 1 and 2)
+    val dy = if (b3) { all(not(smIs(0)), not(IsNull(Reg("nb"))), IsNull(prevIn(Reg("nb")))) } else { And(not(smIs(0)), IsNull(prevIn(Reg("nb")))) }
+    val start = if (b3) { smIs(2) } else { smIs(0) }
     val en: C = if (dj.isEmpty) { True } else { Bit(dj.last) }
     val bA = And(dy, en)
     val bB = And(not(IsNull(Reg("clk"))), IsNull(prevIn(Reg("clk"))))
@@ -62,14 +70,18 @@ object OverlapPal {
       for (i <- 0 until 2) { u.bit(s"sm$i", select((0 to 2).map(k => (smIs(k), bitOf(k + 1, i))), Bit(s"sm$i"))) }
       u.bit("first", Ite2(smIs(0), TagIs(In, 1), Bit("first")))
       for ((b, i) <- dj.zipWithIndex) { u.bit(b, Or(Bit(b), if (i == 0) { dy } else { And(Bit(dj(i - 1)), dy) })) }
-      u.set("pw", Ite(Or(smIs(0), dy), In, Reg("pw")))
-      u.set("nb", Ite(Or(smIs(0), dy), In, prevIn(Reg("nb"))))
+      u.set("pw", Ite(Or(start, dy), In, Reg("pw")))
+      u.set("nb", Ite(Or(start, dy), In, prevIn(Reg("nb"))))
       u.set("clk", Ite(bA, Reg("pw"), prevIn(Reg("clk"))))
       u.bit("b0", bA)
       u.bit("b1", bB)
     }
     p
   }
+
+  /** is bank s young (building, replaying, catching up to its first answer) after CT? Family A is young exactly while
+    * the half clock runs (`clk` armed at A's birth W, null from 3W/2 on), family B exactly while it does not */
+  def young(s: Int): C = if (s == 0) { not(IsNull(Reg("clk"))) } else { IsNull(Reg("clk")) }
 
   /** bank 0 = family A (h = W), bank 1 = family B (h = 3W/2) */
   final class Bank(val s: Int, val kind: CoreKind = Kmp2Core) {
@@ -128,24 +140,42 @@ object OverlapPal {
     def slots(allRegs: Vector[String], allBits: Vector[String]): Map[String, Step] =
       Map(s"M${s}IN" -> in.build(allRegs, allBits), s"M${s}U" -> core.universal(if (kind == GapCore) { _ => () } else { load }).build(allRegs, allBits))
     def schedule(k: Int): Vector[String] = Vector(s"M${s}IN") ++ Vector.fill(k)(s"M${s}U")
+    /** the same universal step, enabled only while the bank is young (the pools plan's model of a small old pool) */
+    def youngOnlySlot(allRegs: Vector[String], allBits: Vector[String]): (String, Step) = {
+      require(kind == GapCore, "the old-limit model is for the gap core")
+      val M2 = new Mod(s"m${s}_", 3, 2, young(s))
+      val c2 = new GapKmp.Core(M2, GapKmp.bankTags(s), GapKmp.Feed(n("src"), n("rc"), n("pendF"), n("pendB"), n("pendN"), n("rev")))
+      s"M${s}UY" -> c2.universal(_ => ()).build(allRegs, allBits)
+    }
+    /** k copies, of which those after the first `oldLimit` run only while the bank is young */
+    def scheduleLimited(k: Int, oldLimit: Int): Vector[String] =
+      Vector(s"M${s}IN") ++ Vector.fill(math.min(k, oldLimit))(s"M${s}U") ++ Vector.fill(math.max(0, k - oldLimit))(s"M${s}UY")
   }
 
   /** out: the short words by the letter counter, then the answering bank (family A while clk is null) */
-  def out: Prog = {
+  def out: Prog = outOf(Ite2(IsNull(Reg("clk")), Bit("m0_acc"), Bit("m1_acc")))
+  /** out: the short words by the letter counter, then `answer` (RolePal: the old role's report) */
+  def outOf(answer: C): Prog = {
     val p = new Prog(0, 0, "", exclusive = true)
     val short = Or(smIs(1), And(smIs(2), Ite2(TagIs(In, 1), Bit("first"), not(Bit("first")))))
-    p.when(True) { u => u.bit("out", Ite2(smIs(3), Ite2(IsNull(Reg("clk")), Bit("m0_acc"), Bit("m1_acc")), short)) }
+    p.when(True) { u => u.bit("out", Ite2(smIs(3), answer, short)) }
     p
   }
 
-  def machine(aSteps: Int, bSteps: Int, minAnchor: Int = 2, kind: CoreKind = Kmp2Core): Lps.Machine = {
+  /** `oldLimit`: an answering (old) bank runs only its first `oldLimit` copies per tick, a young bank all of them — the
+    * step budget of the pools plan's role machine (young pool max(a, b), old pool oldLimit) on the per-bank registers.
+    * The default (no limit) is the machine of UNDER1000.md unchanged. */
+  def machine(aSteps: Int, bSteps: Int, minAnchor: Int = 2, kind: CoreKind = Kmp2Core, oldLimit: Int = Int.MaxValue): Lps.Machine = {
     require(aSteps >= 1 && bSteps >= 1 && minAnchor >= 2 && (minAnchor & (minAnchor - 1)) == 0, "rates >= 1, minAnchor a power of two >= 2")
     val banks = Vector(new Bank(0, kind), new Bank(1, kind))
     val regs = ctlRegs ++ banks.flatMap(_.regs)
     val bits = ctlBits(minAnchor) ++ banks.flatMap(_.bits)
     val names = regs.map(_._1)
-    val slots = Map("CT" -> ct(minAnchor).build(names, bits), "OUT" -> out.build(names, bits)) ++ banks.flatMap(_.slots(names, bits))
-    val schedule = Vector("CT") ++ banks(0).schedule(aSteps) ++ banks(1).schedule(bSteps) ++ Vector("OUT")
+    val limited = oldLimit < math.max(aSteps, bSteps)
+    val slots = Map("CT" -> ct(minAnchor).build(names, bits), "OUT" -> out.build(names, bits)) ++ banks.flatMap(_.slots(names, bits)) ++
+      (if (limited) { banks.map(_.youngOnlySlot(names, bits)).toMap } else { Map.empty[String, Step] })
+    val schedule = if (limited) { Vector("CT") ++ banks(0).scheduleLimited(aSteps, oldLimit) ++ banks(1).scheduleLimited(bSteps, oldLimit) ++ Vector("OUT") }
+      else { Vector("CT") ++ banks(0).schedule(aSteps) ++ banks(1).schedule(bSteps) ++ Vector("OUT") }
     val schema = (if (kind == GapCore) { GapKmp.bankTags.map(_.schema) } else { mTags.map(_.schema) }).reduce(_ ++ _)
     Lps.Machine("ab", regs, bits, Set("out", "m0_p0", "m0_p2", "m1_p0", "m1_p2"), "out", schema, schedule, slots)
   }
