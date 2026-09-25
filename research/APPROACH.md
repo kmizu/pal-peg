@@ -6,14 +6,19 @@ construction, DESIGN.md in the author's notes). It says what was built, what was
 grammar is still about 5× above the target, and which questions are open. The numbers in
 [`NOTES.md`](NOTES.md) §4–§5 are the primary record; this note is the map.
 
-**Status in one line (2026-09-25).** A plain PEG for the binary palindromes with **25,510 rules**
-(2.36M right-hand-side nodes, 12.4 MB), generated from a pointer machine of 66 slots per letter
-(`LpsPal3`, flags truncated to the needed interval, 12 matcher + 36 flags steps), compacted by
-`PegOptimize`, correct on all words ≤ 10, on random words up to 513 letters, deadline-checked on
-structured words, and accepted by the plain PEG runner on raw inputs up to 600 letters
-(`out/pal3-m12-f36.peg.gz`). Before the compression plan it was 33,019 rules (`LpsPal2`); the
-generator of the proof produces 3.1M rules for the same construction. The target ("a few thousand
-rules") needs another 5×; [`NOTES.md`](NOTES.md) §6 has the per-step measurements and the next cost item.
+**Status in one line (2026-09-25, night).** A plain PEG for the binary palindromes with **8,336 rules**
+(431,165 right-hand-side nodes, 2.50 MB): two KMP matcher banks on overlapping anchors (no flags worker,
+`OverlapPal`, 19 + 28 universal steps per letter — the start-up cost of the pattern `a^(h−1) b`) compiled by
+the site-code backend (`LpsCode`: a pointer's allocation site as an EOF-anchored second extent, 31 colours,
+machine answers from n = 48, a bounded fallback below), compacted by `PegOptimize`; correct on all words ≤ 10,
+on adversarial (`b a^(n−2) b`, `a^i b a^j b a^i`), switch and structured words up to 600 letters in the
+interpreter, PEG = interpreter, re-parsed and checked against the oracle, Rust runner correct on 112
+adversarial raw words up to 600 letters (`out/overlap-code-a19-b28.peg.gz`). The earlier 25,510-rule PAL3
+grammar (12/36) turned out to miss a flags deadline on those adversarial words; PAL3 needs 12/40 (27,550
+rules with the old backend, 15,967 with the site codes). [`BREAKTHROUGH.md`](BREAKTHROUGH.md) has the
+design, the checks and the final table, [`NOTES.md`](NOTES.md) §6–§7 the step-by-step numbers and the
+correction. The sections below describe the pipeline as of the PAL3 grammar; the new backend and recognizer
+are documented in `BREAKTHROUGH.md`.
 
 ## 1. The pipeline
 

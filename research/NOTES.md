@@ -184,3 +184,32 @@ reversal 18, matching 44 units, i.e. ≈ 5S, 14S, 4.5S, 11S) and per-phase step 
 does not beat the universal step (36 × ~500 ≈ 18k), because a job's phases are sequential (6A).
 Incremental tables (6B) would cut the r = 3 job's table work from ≈ 14S to ≈ 4S and the flags rate from
 36 toward ≈ 26, about −5k rules, at the price of checkpoint registers: **that is the next cost item.**
+
+
+**Correction (2026-09-25, evening).** The 12/36 rate of §6 is invalid: on the adversarial words
+`b a^(n−2) b` and `a^i b a^j b a^i` (added to `LpsProfile.adversarialWords` after the final review of the
+breakthrough branch) PAL3 12/36 misses a flags deadline (`a^94 b a^266 b a^94`: job (stage 1, r 3) released at
+192 finishes at 227, deadline 224) and answers correctly only by reading a stale result of an earlier stage
+generation; it also accepts the non-palindrome `a^129 b a^94`. PAL3 needs 12/40 (495 adversarial words
+without violation), i.e. the 27,550-rule grammar of the 12/40 row, not the 25,510-rule one. The 12/36 grammar
+was removed from `out/`.
+
+## 7. EOF-coded sites and overlapping anchors (2026-09-25)
+
+See [`BREAKTHROUGH.md`](BREAKTHROUGH.md) for the design, the checks and the final table. In one line each:
+
+| variant | N | rhs nodes | max rhs | bytes |
+|---|---:|---:|---:|---:|
+| PAL3 12/36 (invalid, see the correction above) | 25,510 | 2,361,254 | 894 | 12,410,391 |
+| PAL3 12/40, old backend | 27,550 | 3,614,066 | 1,222 | 22.3M |
+| PAL3 12/40 + warmup (W0 = 64) + site codes | 15,967 | 861,036 | 881 | 4,762,519 |
+| overlapping anchors (19/28), old site-bit backend | 14,955 | 1,256,793 | 694 | 6,969,322 |
+| **overlapping anchors (19/28) + site codes (W0 = 32)** | **8,336** | **431,165** | **617** | **2,502,032** |
+
+(A first version of this table with rates 15/24 — 6,960 rules — was withdrawn: those rates miss the first
+answer of a bank on `b a^(n−2) b`; see `BREAKTHROUGH.md` and `out/metrics/overlap-rate-search.md`.)
+
+The two changes are independent and multiply: the site code removes the log₂(sites) predicate rules per
+pointer (and the 40-way dispatches), the overlapping anchors remove the flags worker (72% of the baseline)
+and its consumer. The remaining grammar is the two banks' universal steps × their copies (19 + 28) plus
+1,685 code rules, 62 helpers and 50 fallback rules.

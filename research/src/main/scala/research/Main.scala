@@ -3,7 +3,8 @@ package research
 /** `run sanity` checks the harness; `run rttm <anbn|marked> [maxLen]` compiles a machine and checks it. */
 object Main {
   /** the PAL machine of a command family: `lps-pal2-*` → LpsPal2, `lps-pal3-*` → LpsPal3 */
-  def palMachine(cmd: String, m: Int, f: Int): Lps.Machine = if (cmd.contains("pal3")) { LpsPal3.machine(m, f) } else { LpsPal2.machine(m, f) }
+  def palMachine(cmd: String, m: Int, f: Int): Lps.Machine =
+    if (cmd.contains("overlap")) { OverlapPal.machine(m, f, 2) } else if (cmd.contains("pal3")) { LpsPal3.machine(m, f) } else { LpsPal2.machine(m, f) }
   def main(args: Array[String]): Unit = args.toList match {
     case "sanity" :: _ =>
       val anbn = Grammar.parse("S = \"a\" S \"b\" / \"\";")
@@ -167,7 +168,7 @@ object Main {
       val fg = rest.drop(2).headOption.map(_.toInt).getOrElse(1)
       val fu = rest.drop(3).headOption.map(_.toInt).getOrElse(0)
       println(Lps.checkSim(LpsPal.machine(mg, fg, fu), maxLen).getOrElse(s"ok: slot PAL PEG agrees with the interpreter on all words of length <= $maxLen (mGroups=$mg, fGroups=$fg, fusion=$fu)"))
-    case cmd :: rest if cmd == "lps-pal2-sim" || cmd == "lps-pal3-sim" =>
+    case cmd :: rest if cmd == "lps-pal2-sim" || cmd == "lps-pal3-sim" || cmd == "lps-overlap-sim" =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(8)
       val ms = rest.drop(1).headOption.map(_.toInt).getOrElse(6)
       val fs = rest.drop(2).headOption.map(_.toInt).getOrElse(24)
@@ -185,7 +186,7 @@ object Main {
         }
       }
       println(bad.getOrElse(s"ok: $cmd (mSteps=$ms, fSteps=$fs, budget=${m.budget}) agrees on all $count words of length <= $maxLen"))
-    case cmd :: rest if cmd == "lps-pal2-rand" || cmd == "lps-pal3-rand" =>
+    case cmd :: rest if cmd == "lps-pal2-rand" || cmd == "lps-pal3-rand" || cmd == "lps-overlap-rand" =>
       val n = rest.headOption.map(_.toInt).getOrElse(200)
       val len = rest.drop(1).headOption.map(_.toInt).getOrElse(64)
       val ms = rest.drop(2).headOption.map(_.toInt).getOrElse(6)
@@ -203,7 +204,7 @@ object Main {
         i += 1
       }
       println(bad.getOrElse(s"ok: $cmd (mSteps=$ms, fSteps=$fs) agrees on $n random words of length <= ${2 * len + 1}"))
-    case cmd :: rest if cmd == "lps-pal2-size" || cmd == "lps-pal3-size" =>
+    case cmd :: rest if cmd == "lps-pal2-size" || cmd == "lps-pal3-size" || cmd == "lps-overlap-size" =>
       val ms = rest.headOption.map(_.toInt).getOrElse(6)
       val fs = rest.drop(1).headOption.map(_.toInt).getOrElse(24)
       val m = palMachine(cmd, ms, fs)
@@ -217,12 +218,12 @@ object Main {
         println(f"  layer $t%2d ${if (t == 0) "-" else m.schedule(t - 1)}%-7s rules=${rs.size}%4d symbols=$sz%6d")
       }
       if (rest.contains("print")) { println(g.render) }
-    case cmd :: rest if cmd == "lps-pal2-peg" || cmd == "lps-pal3-peg" =>
+    case cmd :: rest if cmd == "lps-pal2-peg" || cmd == "lps-pal3-peg" || cmd == "lps-overlap-peg" =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
       val ms = rest.drop(1).headOption.map(_.toInt).getOrElse(1)
       val fs = rest.drop(2).headOption.map(_.toInt).getOrElse(1)
       println(Lps.checkSim(palMachine(cmd, ms, fs), maxLen).getOrElse(s"ok: $cmd PEG agrees with the interpreter on all words of length <= $maxLen (mSteps=$ms, fSteps=$fs)"))
-    case cmd :: rest if cmd == "lps-pal2" || cmd == "lps-pal3" =>
+    case cmd :: rest if cmd == "lps-pal2" || cmd == "lps-pal3" || cmd == "lps-overlap" =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
       val ms = rest.drop(1).headOption.map(_.toInt).getOrElse(6)
       val fs = rest.drop(2).headOption.map(_.toInt).getOrElse(24)
@@ -290,6 +291,7 @@ object Main {
       val (m, label, extra) = which match {
         case "kmp2" => (LpsKmp2.machine(rest(0).toInt), s"kmp2 n=${rest(0)}", Seq("machine_variant" -> "LpsKmp2", "mSteps" -> rest(0), "fSteps" -> "-"))
         case "pal3" => (LpsPal3.machine(rest(0).toInt, rest(1).toInt), s"pal3 ${rest(0)}/${rest(1)}", Seq("machine_variant" -> "LpsPal3", "mSteps" -> rest(0), "fSteps" -> rest(1)))
+        case "overlap" => (OverlapPal.machine(rest(0).toInt, rest(1).toInt, 2), s"overlap ${rest(0)}/${rest(1)}", Seq("machine_variant" -> "OverlapPal", "mSteps" -> rest(0), "fSteps" -> rest(1)))
         case _ => (LpsPal2.machine(rest(0).toInt, rest(1).toInt), s"pal2 ${rest(0)}/${rest(1)}", Seq("machine_variant" -> "LpsPal2", "mSteps" -> rest(0), "fSteps" -> rest(1)))
       }
       val out = rest.last
@@ -309,6 +311,7 @@ object Main {
       val (m, label, extra) = which match {
         case "kmp2" => (LpsKmp2.machine(args(0).toInt), s"kmp2 n=${args(0)}", Seq("machine_variant" -> "LpsKmp2", "mSteps" -> args(0), "fSteps" -> "-"))
         case "pal3" => (LpsPal3.machine(args(0).toInt, args(1).toInt), s"pal3 ${args(0)}/${args(1)}", Seq("machine_variant" -> "LpsPal3", "mSteps" -> args(0), "fSteps" -> args(1)))
+        case "overlap" => (OverlapPal.machine(args(0).toInt, args(1).toInt, 2), s"overlap ${args(0)}/${args(1)}", Seq("machine_variant" -> "OverlapPal", "mSteps" -> args(0), "fSteps" -> args(1)))
         case _ => (LpsPal2.machine(args(0).toInt, args(1).toInt), s"pal2 ${args(0)}/${args(1)}", Seq("machine_variant" -> "LpsPal2", "mSteps" -> args(0), "fSteps" -> args(1)))
       }
       val out = args.last
@@ -330,7 +333,7 @@ object Main {
       // lps-export kmp2 <n> <path> [inline] | lps-export pal2 <m> <f> <path> [inline]: the compacted grammar, to a file
       val inl = rest.contains("inline")
       val args = rest.filter(_ != "inline")
-      val m = which match { case "kmp2" => LpsKmp2.machine(args(0).toInt); case "pal3" => LpsPal3.machine(args(0).toInt, args(1).toInt); case _ => LpsPal2.machine(args(0).toInt, args(1).toInt) }
+      val m = which match { case "kmp2" => LpsKmp2.machine(args(0).toInt); case "pal3" => LpsPal3.machine(args(0).toInt, args(1).toInt); case "overlap" => OverlapPal.machine(args(0).toInt, args(1).toInt, 2); case _ => LpsPal2.machine(args(0).toInt, args(1).toInt) }
       val r = PegOptimize.compact(Lps.compile(m), PegOptimize.Options(inlineSingleUse = inl))
       java.nio.file.Files.write(java.nio.file.Paths.get(args.last), r.grammar.render.getBytes("UTF-8"))
       val (n, sz) = r.grammar.size
@@ -338,7 +341,7 @@ object Main {
     case "lps-profile" :: which :: rest =>
       // lps-profile pal3 <m> <f> <word>  |  lps-profile pal3 <m> <f> structured <maxLen>: jobs, units, deadline checks
       val m = palMachine(s"lps-$which", rest(0).toInt, rest(1).toInt)
-      val words = if (rest(2) == "structured") { LpsProfile.structuredWords(rest(3).toInt) } else { Vector(rest(2)) }
+      val words = rest(2) match { case "structured" => LpsProfile.structuredWords(rest(3).toInt); case "adversarial" => LpsProfile.adversarialWords(rest(3).toInt); case w => Vector(w) }
       var bad = 0
       var maxUnits = 0
       for (w <- words) {
@@ -382,6 +385,121 @@ object Main {
       }
       val (n, sz) = g.size
       println(bad.getOrElse(s"ok: $path re-parsed (rules=$n symbols=$sz) agrees with the palindrome oracle on all $count words of length <= $maxLen"))
+    case "lps-code" :: sub :: kind :: rest =>
+      // lps-code sizes <pal3|overlap> <m> <f> | optimize <kind> <m> <f> <W0|auto> <out.json> [trie] | export <kind> <m> <f> <W0|auto> <path> [trie]
+      //          | peg <kind> <maxLen> <m> <f> <W0> [trie] | check <kind> <m> <f> <W0> <words...> [trie]
+      // pal3: LpsWarmup.machine(m, f, W0), fallback below 2 W0; overlap: OverlapPal.machine(a, b, W0), fallback below 3 W0 / 2
+      val trie = rest.contains("trie")
+      val args = rest.filter(_ != "trie")
+      val isOverlap = kind == "overlap"
+      def mk(ms: Int, fs: Int, w0: Int): Lps.Machine = if (isOverlap) { OverlapPal.machine(ms, fs, w0) } else { LpsWarmup.machine(ms, fs, w0) }
+      def firstAnswer(w0: Int): Int = if (isOverlap) { OverlapPal.firstAnswer(w0) } else { LpsWarmup.firstAnswer(w0) }
+      def opts(w0: Int) = LpsCode.Options(fallbackBelow = Some(firstAnswer(w0)), minBirth = w0, dispatch = if (trie) { LpsCode.Trie } else { LpsCode.Direct })
+      def colours(ms: Int, fs: Int): Int = LpsCode.compileMeta(mk(ms, fs, 2)).coloring.count
+      def w0Of(ms: Int, fs: Int, spec: String): Int = if (spec == "auto") { SiteCode.nextPow2(math.max(colours(ms, fs), 2)) } else { spec.toInt }
+      sub match {
+        case "sizes" =>
+          val c = colours(args(0).toInt, args(1).toInt)
+          val w0 = SiteCode.nextPow2(math.max(c, 2))
+          println(s"$kind colours=$c W0=$w0 firstAnswer=${firstAnswer(w0)}")
+        case "optimize" | "export" =>
+          val (ms, fs) = (args(0).toInt, args(1).toInt)
+          val w0 = w0Of(ms, fs, args(2))
+          val m = mk(ms, fs, w0)
+          val t0 = System.nanoTime()
+          val res = LpsCode.compileMeta(m, opts(w0))
+          val gen = (System.nanoTime() - t0) / 1e9
+          val comp = (n: String) => res.meta.get(n).map(_.slot).getOrElse(PegMetrics.componentOfName(n))
+          val r = PegOptimize.compact(res.grammar)
+          if (sub == "export") {
+            java.nio.file.Files.write(java.nio.file.Paths.get(args(3)), r.grammar.render.getBytes("UTF-8"))
+            val (nn, sz) = r.grammar.size
+            println(s"exported ${args(3)}: rules=$nn symbols=$sz colours=${res.coloring.count} W0=$w0 firstAnswer=${firstAnswer(w0)}")
+          } else {
+            val before = PegMetrics.of(res.grammar, comp)
+            val after = PegMetrics.of(r.grammar, comp)
+            val kept = r.grammar.rules.map(_._1).toSet
+            val codeRules = r.grammar.rules.count(_._1.endsWith("_c"))
+            val helperRules = kept.count(n => res.meta.get(n).exists(_.slot == "helper"))
+            val fallbackRules = kept.count(n => res.meta.get(n).exists(_.slot == "fallback"))
+            val commit = scala.sys.process.Process(Seq("git", "rev-parse", "--short", "HEAD")).!!.trim
+            val variant = if (trie) { "LpsCode+trie+compact" } else { "LpsCode+direct+compact" }
+            val json = after.json(Seq("machine_variant" -> (if (isOverlap) { "OverlapPal" } else { "LpsWarmup(PAL3)" }), "compiler_variant" -> variant,
+              "mSteps" -> ms.toString, "fSteps" -> fs.toString, "source_commit" -> commit, "generation_seconds" -> f"$gen%.2f",
+              "site_color_count" -> res.coloring.count.toString, "warmup_W0" -> w0.toString, "first_answer" -> firstAnswer(w0).toString,
+              "site_code_rules" -> codeRules.toString, "helper_rules" -> helperRules.toString, "fallback_rules" -> fallbackRules.toString,
+              "dispatch" -> (if (trie) { "trie" } else { "direct" }), "N_raw" -> before.rules.toString, "rhs_nodes_raw" -> before.rhsNodes.toString))
+            java.nio.file.Files.write(java.nio.file.Paths.get(args(3)), json.getBytes("UTF-8"))
+            println(PegMetrics.markdownHeader)
+            println(before.markdownRow(s"$kind+code $ms/$fs W0=$w0 raw"))
+            println(after.markdownRow(s"$kind+code $ms/$fs W0=$w0 compact"))
+            println(s"colours=${res.coloring.count} W0=$w0 firstAnswer=${firstAnswer(w0)} code rules=$codeRules helper=$helperRules fallback=$fallbackRules")
+          }
+        case "peg" =>
+          val (maxLen, ms, fs, w0) = (args(0).toInt, args(1).toInt, args(2).toInt, args(3).toInt)
+          val msg = s"ok: $kind+code $ms/$fs W0=$w0 agrees (fallback below ${firstAnswer(w0)}, machine above) on all words <= $maxLen"
+          println(LpsCode.checkSim(mk(ms, fs, w0), maxLen, opts(w0)).getOrElse(msg))
+        case "check" =>
+          val (ms, fs, w0) = (args(0).toInt, args(1).toInt, args(2).toInt)
+          val g = LpsCode.compile(mk(ms, fs, w0), opts(w0))
+          for (w <- args.drop(3)) { val got = g.accepts(w); println(s"${w.length} ${if (got == LpsPal.isPal(w)) "ok" else "WRONG"} PEG=$got oracle=${LpsPal.isPal(w)}") }
+        case _ => println("unknown lps-code subcommand")
+      }
+    case "lps-warmup" :: sub :: rest =>
+      // lps-warmup sim <maxLen> <m> <f> <W0> | rand <n> <len> <m> <f> <W0> | profile <m> <f> <W0> boundary | profile <m> <f> <W0> structured <maxLen>
+      sub match {
+        case "sim" =>
+          val (maxLen, ms, fs, w0) = (rest(0).toInt, rest(1).toInt, rest(2).toInt, rest(3).toInt)
+          val m = LpsWarmup.machine(ms, fs, w0)
+          val bad = Exhaust.words(maxLen, "ab").filter(_.nonEmpty).find(w => Lps.run(m, w).outputs != LpsWarmup.expectedOutputs(w0, w))
+          println(bad.map(w => s"'$w': got ${Lps.run(m, w).outputs.map(b => if (b) "1" else "0").mkString}").getOrElse(s"ok: warmup $ms/$fs W0=$w0 agrees on all words <= $maxLen"))
+        case "rand" =>
+          val (n, len, ms, fs, w0) = (rest(0).toInt, rest(1).toInt, rest(2).toInt, rest(3).toInt, rest(4).toInt)
+          val m = LpsWarmup.machine(ms, fs, w0)
+          val rnd = new scala.util.Random(1)
+          var bad: Option[String] = None
+          var i = 0
+          while (bad.isEmpty && i < n) {
+            val base = Vector.fill(1 + rnd.nextInt(len))(if (rnd.nextBoolean()) 'a' else 'b').mkString
+            val w = rnd.nextInt(3) match { case 0 => base; case 1 => base + base.reverse; case _ => base + base.reverse.drop(1) + "b" }
+            if (Lps.run(m, w).outputs != LpsWarmup.expectedOutputs(w0, w)) { bad = Some(s"'$w'") }
+            i += 1
+          }
+          println(bad.getOrElse(s"ok: warmup $ms/$fs W0=$w0 agrees on $n random words of length <= ${2 * len + 1}"))
+        case "profile" =>
+          val (ms, fs, w0) = (rest(0).toInt, rest(1).toInt, rest(2).toInt)
+          val m = LpsWarmup.machine(ms, fs, w0)
+          val words = rest(3) match { case "boundary" => LpsWarmup.boundaryWords(w0); case "adversarial" => LpsProfile.adversarialWords(rest(4).toInt); case _ => LpsProfile.structuredWords(rest(4).toInt) }
+          var bad = 0
+          for (w <- words) {
+            val pr = LpsProfile.profile(m, w, 2 * w0)
+            val reach = LpsWarmup.checkReachable(m, w, w0)
+            if (pr.violations.nonEmpty || reach.nonEmpty) { bad += 1; println(s"'${w.take(40)}' (${w.length}): ${(pr.violations.take(2) ++ reach).mkString("; ")}") }
+          }
+          println(s"${words.size} words, $bad with violations")
+        case _ => println("unknown lps-warmup subcommand")
+      }
+    case "overlap-profile" :: rest =>
+      // overlap-profile <a> <b> <word> [minAnchor] | overlap-profile <a> <b> structured|switch <maxLen> [minAnchor]
+      val (a, b) = (rest(0).toInt, rest(1).toInt)
+      val (words, minAnchor) = rest(2) match {
+        case "structured" => (LpsProfile.structuredWords(rest(3).toInt), rest.lift(4).map(_.toInt).getOrElse(2))
+        case "switch" => (OverlapProfile.switchWords(rest(3).toInt), rest.lift(4).map(_.toInt).getOrElse(2))
+        case "adversarial" => (OverlapProfile.adversarialWords(rest(3).toInt), rest.lift(4).map(_.toInt).getOrElse(2))
+        case w => (Vector(w), rest.lift(3).map(_.toInt).getOrElse(2))
+      }
+      val m = OverlapPal.machine(a, b, minAnchor)
+      var bad = 0
+      var maxUnits = 0
+      var maxBacklog = 0
+      for (w <- words) {
+        val pr = OverlapProfile.profile(m, w, minAnchor)
+        maxUnits = math.max(maxUnits, pr.maxUnitsPerTick)
+        maxBacklog = math.max(maxBacklog, pr.lives.map(_.maxBacklog).maxOption.getOrElse(0))
+        if (words.size == 1) { println(pr.table) }
+        if (pr.violations.nonEmpty) { bad += 1; if (bad <= 5) { println(s"'${w.take(40)}${if (w.length > 40) "..." else ""}' (${w.length}): " + pr.violations.take(3).mkString("; ")) } }
+      }
+      println(s"overlap $a/$b minAnchor $minAnchor: ${words.size} words, $bad with violations, max units in a tick $maxUnits, max backlog $maxBacklog")
     case "lps-kmp2" :: rest =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
       val n = rest.drop(1).headOption.map(_.toInt).getOrElse(6)

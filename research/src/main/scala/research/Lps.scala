@@ -53,9 +53,9 @@ object Lps {
     var st = State(Map.empty, m.initTrue)
     var prevSep: RCell = null
     for (i <- (w.length - 1) to 0 by -1) {
-      val in = new RCell(m.alphabet.indexOf(w.charAt(i)), prevSep, null, null, null, -1)
-      val sep = new RCell(m.alphabet.length, in, null, null, null, -2)
-      for (t <- 1 to m.budget) { st = unitStep(m.slotAt(t), regNames, m.bits, st, in, sep, t == 1, t) }
+      val in = new RCell(m.alphabet.indexOf(w.charAt(i)), prevSep, null, null, null, -1, -1, w.length - i)
+      val sep = new RCell(m.alphabet.length, in, null, null, null, -2, -1, w.length - i)
+      for (t <- 1 to m.budget) { st = unitStep(m.slotAt(t), regNames, m.bits, st, in, sep, t == 1, t, w.length - i) }
       f(w.length - i, st)
       prevSep = sep
     }
@@ -67,9 +67,9 @@ object Lps {
     var st = State(Map.empty, m.initTrue)
     var prevSep: RCell = null
     for (i <- (w.length - 1) to 0 by -1) {
-      val in = new RCell(m.alphabet.indexOf(w.charAt(i)), prevSep, null, null, null, -1)
-      val sep = new RCell(m.alphabet.length, in, null, null, null, -2)
-      for (t <- 1 to m.budget) { st = unitStep(m.slotAt(t), regNames, m.bits, st, in, sep, t == 1, t); f(w.length - i, m.schedule(t - 1), st) }
+      val in = new RCell(m.alphabet.indexOf(w.charAt(i)), prevSep, null, null, null, -1, -1, w.length - i)
+      val sep = new RCell(m.alphabet.length, in, null, null, null, -2, -1, w.length - i)
+      for (t <- 1 to m.budget) { st = unitStep(m.slotAt(t), regNames, m.bits, st, in, sep, t == 1, t, w.length - i); f(w.length - i, m.schedule(t - 1), st) }
       prevSep = sep
     }
   }
@@ -83,10 +83,10 @@ object Lps {
     var prevSep: RCell = null
     val outs = Vector.newBuilder[Boolean]
     for (i <- (w.length - 1) to 0 by -1) {
-      val in = new RCell(m.alphabet.indexOf(w.charAt(i)), prevSep, null, null, null, -1)
-      val sep = new RCell(m.alphabet.length, in, null, null, null, -2)
+      val in = new RCell(m.alphabet.indexOf(w.charAt(i)), prevSep, null, null, null, -1, -1, w.length - i)
+      val sep = new RCell(m.alphabet.length, in, null, null, null, -2, -1, w.length - i)
       for (t <- 1 to m.budget) {
-        st = unitStep(m.slotAt(t), regNames, m.bits, st, in, sep, t == 1, t)
+        st = unitStep(m.slotAt(t), regNames, m.bits, st, in, sep, t == 1, t, w.length - i)
         // the compiler trusts the declared kinds: check them here, register by register and field by field
         for ((r, kinds) <- m.regs; c = st.regs.getOrElse(r, null) if !kindOk(m, c, kinds)) {
           throw new IllegalStateException(s"register $r holds a cell of tag ${c.tag} (declared kinds $kinds) after slot $t of tick ${w.length - i}")

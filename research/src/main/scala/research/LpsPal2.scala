@@ -240,7 +240,7 @@ object LpsPal2 {
     val regs = ctlRegs ++ ms.flatMap(_.regs) ++ Flags.regs
     val bits = ctlBits ++ ms.flatMap(_.bits) ++ Flags.bits
     val names = regs.map(_._1)
-    val slots = Map("CT1" -> LpsPal.ct1.build(names, bits), "CT2" -> LpsPal.ct2.build(names, bits), "CT3" -> LpsPal.ct3.build(names, bits)) ++
+    val slots = Map("CT1" -> LpsPal.ct1().build(names, bits), "CT2" -> LpsPal.ct2.build(names, bits), "CT3" -> LpsPal.ct3.build(names, bits)) ++
       ms.flatMap(_.slots(names, bits)) ++ Flags.slots(names, bits)
     val schedule = Vector("CT1") ++ ms.flatMap(_.schedule(mSteps)) ++ Flags.schedule(fSteps) ++ Vector("CT2", "CT3")
     val schema = (mTags :+ fTags).map(_.schema).reduce(_ ++ _)

@@ -1,0 +1,18 @@
+{
+  "machine_variant": "OverlapPal",
+  "mSteps": "19",
+  "fSteps": "28",
+  "source_commit": "f189bbe",
+  "compiler_variant": "Lps+compact",
+  "N_raw": "16727",
+  "rhs_nodes_raw": "1274011",
+  "optimize_seconds": "1.50",
+  "N": 14955,
+  "rhs_nodes": 1256793,
+  "max_rhs_nodes": 694,
+  "rendered_utf8_bytes": 6969322,
+  "distinct_rhs_dag_nodes": 286577,
+  "dispatch_arm_count": 235420,
+  "N_by_component": {"-": 151, "CT": 20, "M0IN": 83, "M0U": 5909, "M1IN": 81, "M1U": 8708, "OUT": 3},
+  "rhs_nodes_by_component": {"-": 905, "CT": 117, "M0IN": 493, "M0U": 412342, "M1IN": 489, "M1U": 842410, "OUT": 37}
+}

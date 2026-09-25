@@ -4,7 +4,7 @@ Scaffolding for the search for a *small* ordinary PEG (a few hundred rules) reco
 palindromes. Nothing here changes the proof in `../proof`; the grammars here are experiments.
 
 **Current approach and status: [`APPROACH.md`](APPROACH.md)** (the slot-scheduled pointer machines
-`Lps*.scala`, 25,510 rules at 2026-09-25). The measurements in order: [`NOTES.md`](NOTES.md).
+`Lps*.scala`, 8,336 rules at 2026-09-25 — see [`BREAKTHROUGH.md`](BREAKTHROUGH.md)). The measurements in order: [`NOTES.md`](NOTES.md).
 
 ```sh
 sbt test                       # the harness checks itself

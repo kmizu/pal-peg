@@ -26,7 +26,8 @@ object LpsProfile {
   private def ivOf(st: Lpm.State, s: Int): Int = (0 until 3).map(i => if (st.bits(s"iv${s}_$i")) { 1 << i } else { 0 }).sum
 
   /** `w` is read from its end, as the machine does; the returned ticks are 1-based reading ticks */
-  def profile(m: Lps.Machine, w: String): Profile = {
+  /** `firstAnswer` > 0: the machine is expected to answer false for 4 <= t < firstAnswer (a warmup, plan §3.4) */
+  def profile(m: Lps.Machine, w: String, firstAnswer: Int = 0): Profile = {
     val rd = w.reverse
     val jobs = mutable.ArrayBuffer.empty[Job]
     val violations = mutable.ArrayBuffer.empty[String]
@@ -84,7 +85,7 @@ object LpsProfile {
       }
       if (slot == "CT3") {
         // the output itself, against the palindrome oracle (the structured words are then oracle-checked too)
-        val want = LpsPal.isPal(rd.take(t))
+        val want = if (t >= 4 && t < firstAnswer) { false } else { LpsPal.isPal(rd.take(t)) }
         if (st.bits("out") != want) { violations += s"tick $t: output ${st.bits("out")}, the prefix read so far ${if (want) { "is" } else { "is not" }} a palindrome" }
         // the matcher of an answering stage must report exactly when the text ends with the pattern
         for (s <- 0 to 1 if st.bits(s"alive$s")) {
@@ -122,6 +123,22 @@ object LpsProfile {
       val pal = half + (if (n % 2 == 1) "a" else "") + half.reverse
       ws += pal
       if (pal.length >= 2) { val i = pal.length / 3; ws += pal.updated(i, if (pal(i) == 'a') 'b' else 'a') }
+    }
+    ws.result().distinct
+  }
+
+  /** adversarial words for the workers' start-up (see OverlapProfile.adversarialWords): `b a^(n-2) b` at every length up
+    * to maxLen and `a^i b a^j b a^i` around the powers of two */
+  def adversarialWords(maxLen: Int): Vector[String] = {
+    val ws = Vector.newBuilder[String]
+    for (n <- 3 to maxLen) { ws += "b" + "a" * (n - 2) + "b" }
+    var w = 4
+    while (2 * w <= maxLen) {
+      for (n <- Vector(2 * w, 2 * w + 1, 3 * w, 4 * w - 1, 4 * w) if n <= maxLen; i <- Vector(1, w / 4, w / 2, w - 1) if i >= 1 && 2 * i + 2 <= n) {
+        val j = n - 2 * i - 2
+        ws += "a" * i + "b" + "a" * j + "b" + "a" * i
+      }
+      w *= 2
     }
     ws.result().distinct
   }

@@ -161,7 +161,8 @@ object Lpm {
 
   // ---- interpreter ------------------------------------------------------------------------
 
-  final class RCell(val tag: Int, val p1: RCell, val p2: RCell, val p3: RCell, val p4: RCell, val layer: Int) {
+  /** `site` and `tick` are debug information of the interpreter (the allocation site index and the reading tick) */
+  final class RCell(val tag: Int, val p1: RCell, val p2: RCell, val p3: RCell, val p4: RCell, val layer: Int, val site: Int = -1, val tick: Int = -1) {
     def fld(f: Int): RCell = f match { case 1 => p1; case 2 => p2; case 3 => p3; case _ => p4 }
   }
   final case class State(regs: Map[String, RCell], bits: Set[String])
@@ -206,12 +207,12 @@ object Lpm {
   }
 
   /** One unit of `step` over the registers `regs` and bits `bits`. */
-  def unitStep(step: Step, regs: Vector[String], bits: Vector[String], st: State, in: RCell, sep: RCell, first: Boolean, layer: Int): State = {
+  def unitStep(step: Step, regs: Vector[String], bits: Vector[String], st: State, in: RCell, sep: RCell, first: Boolean, layer: Int, tick: Int = -1): State = {
     // the sites are created in order; a site's fields may refer to the earlier sites of the same unit
     var made = Vector.empty[RCell]
     for ((_, cl) <- sitesOf(step)) {
       val pre = Ctx(st, in, sep, made, first)
-      made = made :+ new RCell(evalTE(cl.tag, pre), evalE(cl.p1, pre), evalE(cl.p2, pre), evalE(cl.p3, pre), evalE(cl.p4, pre), layer)
+      made = made :+ new RCell(evalTE(cl.tag, pre), evalE(cl.p1, pre), evalE(cl.p2, pre), evalE(cl.p3, pre), evalE(cl.p4, pre), layer, made.size, tick)
     }
     val ctx = Ctx(st, in, sep, made, first)
     val rs = regs.map { r => r -> (step.regs.get(r) match { case Some(e) => evalE(e, ctx); case None => st.regs.getOrElse(r, null) }) }.toMap
