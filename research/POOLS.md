@@ -94,7 +94,8 @@ young 14 fails (n 262) and old 3 fails (n 671) as in the model.
 h = 24): with `endonce` a young bank of a short window loses up to one tick of its 8. That word is irrelevant to the
 grammar: with 21 colours W₀ = 32, so the first anchor is 32 and the fallback answers every n < 48. A life's work depends
 only on the input, so a word of length ≥ 48 behaves identically at minAnchor 16 and 32. At minAnchor 32, A passes the
-fresh seed (3,810 words, random up to 2,049 letters) and the non-`endonce` variant too.
+fresh seed (3,810 words, random up to 2,049 letters) and the non-`endonce` variant too, and a third seed (11) with
+5,000 random words up to 2,049 letters plus adversarial ≤ 600, switch ≤ 1,025, structured ≤ 1,025 (6,385 words; 16/4 as well).
 
 **A base-3 clock (W₀ = 24) is not used.** Starting the doubling clock at tick 3 gives anchors 24, 36, 48, 72, …, so 21
 colours would need only W₀ = 24 (a fallback of 36 instead of 48 lengths). A passes the big set at minAnchor 24, but fails
@@ -188,7 +189,8 @@ max RHS 65,536 (`metrics/pools-inline-curve-y15-o4.md`):
 the `.peg` `eef35388…77656c1`, of the `.peg.gz` `102db800…108f0a958`. Checks: re-parsed, it equals the oracle on all 1,023
 words ≤ 9 (`lps-check-file`); the Rust plain-PEG runner on the 140 raw words of `probes/runner_words.py 24 600` gives 0
 mismatches (at most 4.4 s and 67 million steps per word). The machine it prints (RolePal 15/4 A at W₀ 32) passes
-the four families (§3) and every counterexample of the rejected configurations (`PoolsSuite`).
+the four families on three seeds (3,385 + 3,810 + 6,385 words, §3) and every counterexample of the rejected
+configurations (`PoolsSuite`).
 
 This meets the target of inst.md (N < 1,000 after `PegOptimize` + budgeted inlining) but **not the preferred size**: the
 preferred ×2–×3 budget gives 1,377–1,194 rules. Census of the 999-rule grammar: young layers 45–52 rules each (core
@@ -212,7 +214,7 @@ abstract matcher correctness:      unchanged (Appendix A + range lemma, finite)
 role handover:                     the handover copies the young state exactly (checked by the profiler on every birth
                                    tick of the test words); the young text is shorter than its pattern until the handover,
                                    so the young bank never has a full match (argument; this is what endonce relies on)
-per-bank startup/deadline bound:   rates found by measurement only (15 young / 4 old at W0 32 on 3,385 + 3,810 words);
+per-bank startup/deadline bound:   rates found by measurement only (15 young / 4 old at W0 32 on 3,385 + 3,810 + 6,385 words);
                                    young 14 and old 3 have counterexamples; no all-input bound
 compiler endpoint preservation:    PegBudgetInline exact by construction; LpsCode unchanged
 printed-grammar totality:          the structural argument of BREAKTHROUGH.md (consuming helpers, references to earlier

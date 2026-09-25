@@ -229,6 +229,6 @@ See `UNDER1000.md`: the target was not reached; the best grammars are 5,902 rule
 The young bank (building, replaying) always lives in `y_*`, the answering bank in `o_*`, with a handover at every birth, so
 the schedule carries 15 young + 4 old copies instead of 10 + 14 per-bank ones; a compact state encoding, a dead young `acc`,
 the first steps fused into IN and the end of the build confined to the first young step of a tick cut the young layer from
-50 to 42 core rules. The rates (15/4) are measured on 3,385 + 3,810 words at W0 32; young 14 and old 3 have counterexamples.
+50 to 42 core rules. The rates (15/4) are measured on 3,385 + 3,810 + 6,385 words (three seeds) at W0 32; young 14 and old 3 have counterexamples.
 N < 1,000 is reached only at a large node budget (×9.75, 8 MB); at the preferred ×2–×3 it is 1,377–1,194. Not a Lean proof.
 
