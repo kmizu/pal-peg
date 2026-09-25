@@ -217,3 +217,18 @@ and its consumer. The remaining grammar is the two banks' universal steps × the
 ## 8. Under 1,000 rules: the gap matcher and the budgeted inliner (2026-09-25)
 
 See `UNDER1000.md`: the target was not reached; the best grammars are 5,902 rules (gap core 10/13, `out/under1000-gap-a10-b13.peg.gz`) and its inlined variants (`out/metrics/gap-inline/`). The obstruction is the product of the rate floor of the two-anchor architecture (≥ 10 universal-step copies at unit costs, 23 measured) and the ≈ 46 register/site rules per layer that no inlining removes.
+
+## 9. Role pools: one builder, one answerer (2026-09-25)
+
+| grammar | N compact | N inlined | rhs nodes (inlined) | bytes (inlined) |
+|---|---:|---:|---:|---:|
+| gap 10/13 (UNDER1000.md; wrong on a palindrome of 128 letters) | 5,902 | 1,492 (×4) | 832,771 | 3.6 MB |
+| gap 10/14 (corrected status quo) | 6,177 | — | — | — |
+| role 15/4 A (`POOLS.md`) | 4,216 | 1,377 (×2) / 1,120 (×4) / **999 (×9.75)** | 1,945,495 | 8.0 MB |
+
+The young bank (building, replaying) always lives in `y_*`, the answering bank in `o_*`, with a handover at every birth, so
+the schedule carries 15 young + 4 old copies instead of 10 + 14 per-bank ones; a compact state encoding, a dead young `acc`,
+the first steps fused into IN and the end of the build confined to the first young step of a tick cut the young layer from
+50 to 42 core rules. The rates (15/4) are measured on 3,385 + 3,810 words at W0 32; young 14 and old 3 have counterexamples.
+N < 1,000 is reached only at a large node budget (×9.75, 8 MB); at the preferred ×2–×3 it is 1,377–1,194. Not a Lean proof.
+

@@ -1,5 +1,10 @@
 # Towards a PAL PEG below 1,000 rules: results (2026-09-25)
 
+> **Correction (2026-09-25, `POOLS.md` §0).** The 10/13 grammar of this document answers **false** on a palindrome of 128
+> letters (a random palindrome found by the pools plan's fourth word family; kept in `src/test/resources/pools-counterexamples.txt`):
+> bank B is late at its first answering tick. Both `out/under1000-gap-a10-b13*.peg.gz` grammars are therefore wrong on that word.
+> The per-bank rate that passes all four families is 10/14 (6,177 rules compact). The rest of this document is unchanged.
+
 Executed from `pal-peg-under-1000-claude-code-c4b38c5.md` on top of main `c4b38c5` (the 8,336-rule grammar of
 `BREAKTHROUGH.md`). Everything below is a finite check of experimental machines and their printed plain PEGs;
 nothing here is a Lean proof (the proof in `../proof` is untouched).

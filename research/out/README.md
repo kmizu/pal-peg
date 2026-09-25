@@ -1,5 +1,16 @@
 # Generated grammars
 
+- `pools-role-y15-o4-n999.peg.gz` — **the current best (2026-09-25, `POOLS.md`): 999 rules.** The role machine (`RolePal`,
+  young pool 15, old pool 4, options noacc fuse compact endent endonce, W0 = 32, first machine answer 48) compiled by the
+  site-code backend and inlined by `PegBudgetInline` to the first grammar of the greedy run with fewer than 1,000 rules
+  (node budget ×9.75): 1,945,495 rhs nodes, max rhs 16,224, 7,958,678 bytes. Re-parsed = oracle on all words ≤ 9; Rust runner
+  on 140 raw words of 24–601 letters: 0 mismatches. `metrics/pools-role-y15-o4-n999.json` (sha256 of both files),
+  `metrics/pools-inline-curve-y15-o4.md` (the whole N-versus-nodes curve). Reproduce: `run lps-code export role 15 4 auto
+  out/pools-role-y15-o4.peg noacc fuse compact endent endonce` then `run lps-inline-curve out/pools-role-y15-o4.peg 32 65536
+  curve.md 1000 out.peg out.json`.
+- `pools-role-y15-o4.peg.gz` — the same machine before inlining: 4,216 rules, 199,511 rhs nodes, 1.08 MB
+  (`metrics/pools-role-y15-o4.json`).
+- **Warning:** the two `under1000-gap-a10-b13*` grammars below answer false on a palindrome of 128 letters (`POOLS.md` §0).
 - `under1000-gap-a10-b13.peg.gz` — **the current best (2026-09-25, `UNDER1000.md`)**: the overlap recognizer with the
   gap matcher (`GapKmp`: persistent nested gap sequences instead of Kmp2's failure-chain walks, A 10 / B 13 steps
   per letter) compiled by the site-code backend (16 colours, W0 = 16, the machine answers from n = 24) and compacted:

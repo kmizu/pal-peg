@@ -87,6 +87,20 @@ the lighter one (a young layer costs about 11 core rules more than an old one, �
   possible, and after a mismatch the next full match is at least as far away as the pops it costs (the KMP potential).
   This is a finite observation, not a proof.
 
+**Configuration A** (`r15/4:noacc,fuse,compact,endent,endonce`, §4.2): big set at minAnchor 16 PASS for 15/4, 16/3 and 16/4;
+young 14 fails (n 262) and old 3 fails (n 671) as in the model.
+
+**The rate search must use the production W₀.** A fresh seed (7) at minAnchor 16 made A fail at n = 42 (bank B with
+h = 24): with `endonce` a young bank of a short window loses up to one tick of its 8. That word is irrelevant to the
+grammar: with 21 colours W₀ = 32, so the first anchor is 32 and the fallback answers every n < 48. A life's work depends
+only on the input, so a word of length ≥ 48 behaves identically at minAnchor 16 and 32. At minAnchor 32, A passes the
+fresh seed (3,810 words, random up to 2,049 letters) and the non-`endonce` variant too.
+
+**A base-3 clock (W₀ = 24) is not used.** Starting the doubling clock at tick 3 gives anchors 24, 36, 48, 72, …, so 21
+colours would need only W₀ = 24 (a fallback of 36 instead of 48 lengths). A passes the big set at minAnchor 24, but fails
+the fresh seed at n = 197 (bank B, h = 144): a different set of anchors meets different words at the edge. After inlining
+the fallback is nearly free anyway (§4.3: 4 fallback rules survive), so the base-3 clock is kept as an option only.
+
 ## 4. Results
 
 ### 4.1 Gate 1: the role machine at 16 / 4 (measured)
@@ -149,8 +163,84 @@ in a later step waits in that state until the next tick's first step; the strict
 the build side by the end of its young window) makes sure END exists before the handover. It costs at most one tick of
 young steps per life, so the rates are re-validated (§3).
 
-(to be completed)
+### 4.3 The result: N < 1,000 (measured)
+
+`lps-inline-curve` runs the greedy inliner once with the largest budget and records (N, rhs nodes, bytes) after every
+elimination; with a fixed max-RHS bound, the eliminations under a smaller node budget are a prefix of those under a
+larger one (the cheapest candidate is taken first; if it does not fit, no candidate does), so the whole trade-off curve
+comes from one run. Configuration A, 4,216 rules compact (`out/pools-role-y15-o4.peg.gz`, `metrics/pools-role-y15-o4.json`),
+max RHS 65,536 (`metrics/pools-inline-curve-y15-o4.md`):
+
+| node budget (× the compact grammar's 199,511 rhs nodes) | N | rhs nodes | bytes (estimate) |
+|---|---:|---:|---:|
+| ×1 | 2,499 | 199,507 | 1,053,026 |
+| ×1.25 | 1,747 | 249,213 | 1,266,897 |
+| ×2 | 1,377 | 398,621 | 1,922,124 |
+| ×3 | 1,194 | 596,775 | 2,791,991 |
+| ×4 | 1,120 | 796,230 | 3,509,186 |
+| ×8 | 1,023 | 1,582,180 | 6,705,420 |
+| **×9.75** | **999** | **1,945,495** | 8,211,904 |
+| ×16 | 946 | 3,179,139 | 13,814,327 |
+| ×32 | 878 | 6,346,794 | 26,552,136 |
+
+**The 999-rule grammar** (`out/pools-role-y15-o4-n999.peg.gz`, `metrics/pools-role-y15-o4-n999.json`, measured): 999 rules,
+1,945,495 rhs nodes, max RHS 16,224, 7,958,678 rendered bytes, 42,936 distinct DAG nodes, 275,293 bytes gzipped; sha256 of
+the `.peg` `eef35388…77656c1`, of the `.peg.gz` `102db800…108f0a958`. Checks: re-parsed, it equals the oracle on all 1,023
+words ≤ 9 (`lps-check-file`); the Rust plain-PEG runner on the 140 raw words of `probes/runner_words.py 24 600` gives 0
+mismatches (at most 4.4 s and 67 million steps per word). The machine it prints (RolePal 15/4 A at W₀ 32) passes
+the four families (§3) and every counterexample of the rejected configurations (`PoolsSuite`).
+
+This meets the target of inst.md (N < 1,000 after `PegOptimize` + budgeted inlining) but **not the preferred size**: the
+preferred ×2–×3 budget gives 1,377–1,194 rules. Census of the 999-rule grammar: young layers 45–52 rules each (core
+31–36, K 7–12, X 7–8), old layers 30–48, IN 137, layer 0 23, helpers 29, fallback 4, controller 8. What survives the
+inliner is what the next layer reads hundreds of times: every pointer register is read through a dispatch over its
+colours, and the guards are shared by all register updates of a layer (`y_K_5` has 680 references, `y_q0_5` 860).
+
+| variant | N compact | N inlined (×1.25 / ×2 / ×4) | best N < 1,000 | colours / W₀ / first answer |
+|---|---:|---|---|---|
+| gap 10/13 (UNDER1000.md; wrong, §0) | 5,902 | 2,319 / 1,816 / 1,494 | — | 16 / 16 / 24 |
+| gap 10/14 (the corrected status quo) | 6,177 | not measured | — | 17 / 32 / 48 |
+| role 16/4 | 4,987 | 1,972 / 1,549 / 1,301 | — (1,280 at ×4, maxRhs 16,384) | 22 / 32 / 48 |
+| role 15/4 `noacc fuse compact` | 4,407 | 1,812 / 1,432 / — | — | 21 / 32 / 48 |
+| **role 15/4 A** | **4,216** | 1,747 / 1,377 / 1,120 | **999 at ×9.75** (8.0 MB) | 21 / 32 / 48 |
 
 ## 5. What is and is not established
 
-(to be completed)
+```
+overlap/coverage lemma:            unchanged (UNDER1000.md; finite check <= 16, schedule <= 4096)
+abstract matcher correctness:      unchanged (Appendix A + range lemma, finite)
+role handover:                     the handover copies the young state exactly (checked by the profiler on every birth
+                                   tick of the test words); the young text is shorter than its pattern until the handover,
+                                   so the young bank never has a full match (argument; this is what endonce relies on)
+per-bank startup/deadline bound:   rates found by measurement only (15 young / 4 old at W0 32 on 3,385 + 3,810 words);
+                                   young 14 and old 3 have counterexamples; no all-input bound
+compiler endpoint preservation:    PegBudgetInline exact by construction; LpsCode unchanged
+printed-grammar totality:          the structural argument of BREAKTHROUGH.md (consuming helpers, references to earlier
+                                   sites of the same layer or to lower layers); not machine-checked
+finite tests:                      §3, §4.3; sbt test (PoolsSuite, RolePalSuite and the earlier suites)
+Lean verification status:          none — not a Lean proof; the theorem in ../proof is about the automaton
+```
+
+## 6. Tasks of inst.md not executed, and why
+
+- **Task 3 (anchor rebalance α ∈ {11/8, 23/16}).** Not implemented. With the dyadic history the replay lengths
+  k = 2h − n₀ become 5W/8, 3W/4 (α = 11/8) or 9W/16, 7W/8 (α = 23/16), which no single saved cell counts: a two-stage
+  countdown needs a second pointer register and a stage bit in every young layer (+2 core rules × 14, estimate), and a
+  longer replay that fits a saved cell makes A as expensive as B is now (estimate: A ≈ 11.9, B ≈ 9.4 at α = 11/8 against
+  B ≈ 11.8 at 3/2). The base-3 experiment (§3) shows the other risk: changing the anchors changes which random
+  palindromes sit at the edge. Worth measuring only with the model (`OverlapPal` with α) before any machine work.
+- **Task 4.1 (single-writer registers in the compiler).** Not implemented; `endonce` removes the only register that
+  qualified in the young layers (`end`) at the machine level. `acc` of the young role is gone (`noacc`).
+- **Task 4.2 (rv/ks merged).** Implemented (`tmp`), measured, rejected: 34 colours (W₀ 64).
+- **Task 4.3 (phase bits as one EOF code).** Replaced by the compact state encoding (young 3 bits, old 2 bits instead of
+  5; no REV, no IDLE), which needs no new register kind.
+
+## 7. Next steps (each one measurable)
+
+1. **Fewer references per register** — the inliner stops where a register or guard has hundreds of readers. A pointer
+   read dispatches over all its colours; a representation whose hot registers have small domains (fewer colours per
+   read) would let the inliner go further at ×2–×3.
+2. **A heterogeneous schedule** (inst §5): young layers that only build and young layers that only match, sized by
+   the phase demands of Task 0, would drop `src`/`rc`/`end` from the matching layers and the FIFO reversal from the
+   building ones.
+3. **Task 3 on the model first**, as above.

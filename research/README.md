@@ -4,7 +4,9 @@ Scaffolding for the search for a *small* ordinary PEG (a few hundred rules) reco
 palindromes. Nothing here changes the proof in `../proof`; the grammars here are experiments.
 
 **Current approach and status: [`APPROACH.md`](APPROACH.md)** (the slot-scheduled pointer machines
-`Lps*.scala`, 8,336 rules at 2026-09-25 — see [`BREAKTHROUGH.md`](BREAKTHROUGH.md)). The measurements in order: [`NOTES.md`](NOTES.md).
+`Lps*.scala`). Latest: [`POOLS.md`](POOLS.md) ([日本語](POOLS.ja.md)) — the role machine at 15/4, 4,216 rules compact and
+**999 rules after budgeted inlining** (8.0 MB); before it [`UNDER1000.md`](UNDER1000.md) (5,902 rules, wrong on one
+palindrome of 128 letters, corrected there) and [`BREAKTHROUGH.md`](BREAKTHROUGH.md) (8,336). The measurements in order: [`NOTES.md`](NOTES.md).
 
 ```sh
 sbt test                       # the harness checks itself
