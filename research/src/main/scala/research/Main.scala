@@ -374,6 +374,49 @@ object Main {
         val regs = st.regs.toVector.sortBy(_._1).filter { case (n, c) => c != null && re.findFirstIn(n).isDefined }.map { case (n, c) => s"$n=t${c.tag}@${c.layer}" }.mkString(" ")
         println(s"tick $tick $slot: $bits | $regs")
       }
+    case "lps-inline-curve" :: path :: maxFactorS :: maxRhsS :: outMd :: rest =>
+      // lps-inline-curve <in.peg> <maxFactor> <maxRhs> <out.md> [<N> <out.peg> <out.json>]: one greedy PegBudgetInline run
+      // with the node budget maxFactor x the compacted input; the N reached at node factors 1 .. maxFactor; optionally the
+      // first grammar of the run with fewer than N rules is rebuilt (the same run stopped at its node total) and exported
+      val text = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path)), "UTF-8")
+      val g = PegOptimize.compact(Grammar.parse(text)).grammar
+      val before = PegMetrics.of(g, PegMetrics.componentOfName)
+      val maxRhs = maxRhsS.toInt
+      val t0 = System.nanoTime()
+      val r = PegBudgetInline.inline(g, PegBudgetInline.Options(nodeBudget = (before.rhsNodes * maxFactorS.toDouble).toLong, maxRhs = maxRhs))
+      val secs = (System.nanoTime() - t0) / 1e9
+      val factors = Vector(1.0, 1.25, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0).filter(_ <= maxFactorS.toDouble)
+      val rows = factors.map { f =>
+        val cap = (before.rhsNodes * f).toLong
+        val last = r.trace.takeWhile(_._2 <= cap).lastOption.getOrElse((before.rules, before.rhsNodes, before.renderedUtf8Bytes))
+        f"| x$f%.2f | ${last._1} | ${last._2} | ${last._3} |"
+      }
+      val firstBelow = (n: Int) => r.trace.find(_._1 < n)
+      val md = s"# PegBudgetInline curve of `$path` (maxRhs $maxRhs)\n\nOne greedy run (the eliminations under a smaller node budget are a prefix of those under a larger one). " +
+        s"Input: ${before.rules} rules, ${before.rhsNodes} rhs nodes, ${before.renderedUtf8Bytes} bytes. Final: ${r.grammar.rules.size} rules, ${r.nodes} nodes (${f"$secs%.0f"} s).\n\n" +
+        "| node budget | N | rhs nodes | byte estimate |\n|---|---:|---:|---:|\n" + rows.mkString("\n") + "\n" +
+        Vector(1000, 1100, 1200).map(n => firstBelow(n).map { case (k, nodes, bytes) => s"\nfirst N < $n: $k rules at $nodes nodes (x${f"${nodes.toDouble / before.rhsNodes}%.2f"}), byte estimate $bytes" }.getOrElse(s"\nN < $n not reached")).mkString + "\n"
+      java.nio.file.Files.write(java.nio.file.Paths.get(outMd), md.getBytes("UTF-8"))
+      println(md)
+      rest match {
+        case nS :: outPeg :: outJson :: _ =>
+          val idx = r.trace.indexWhere(_._1 < nS.toInt)
+          if (idx >= 0) {
+            val nodes = r.trace.take(idx + 1).map(_._2).max   // the budget under which the same greedy run reaches this point
+            val r2 = PegBudgetInline.inline(g, PegBudgetInline.Options(nodeBudget = nodes, maxRhs = maxRhs))
+            val after = PegMetrics.of(r2.grammar, PegMetrics.componentOfName)
+            val rendered = r2.grammar.render
+            java.nio.file.Files.write(java.nio.file.Paths.get(outPeg), rendered.getBytes("UTF-8"))
+            val sha = java.security.MessageDigest.getInstance("SHA-256").digest(rendered.getBytes("UTF-8")).map(b => f"${b & 0xff}%02x").mkString
+            val commit = scala.sys.process.Process(Seq("git", "rev-parse", "--short", "HEAD")).!!.trim
+            val json = after.json(Seq("source_file" -> path, "source_commit" -> commit, "pass" -> "PegOptimize.compact+PegBudgetInline",
+              "node_budget" -> nodes.toString, "max_rhs_budget" -> maxRhs.toString, "N_before" -> before.rules.toString,
+              "rhs_nodes_before" -> before.rhsNodes.toString, "bytes_before" -> before.renderedUtf8Bytes.toString, "sha256_uncompressed" -> sha))
+            java.nio.file.Files.write(java.nio.file.Paths.get(outJson), json.getBytes("UTF-8"))
+            println(PegMetrics.markdownHeader); println(after.markdownRow(s"inline to N < $nS")); println(s"sha256 $sha")
+          }
+        case _ => ()
+      }
     case "lps-inline-sweep" :: path :: outDir :: rest =>
       // lps-inline-sweep <in.peg> <outDir> [preset-xfactor-rmaxRhs ...]: the Pareto table of PegBudgetInline on one grammar
       // (nodes x {1, 1.25, 1.5, 2, 3, 4} at maxRhs 4096, nodes x {3, 4} at maxRhs 16384, bytes x 1 at 4096); one json per

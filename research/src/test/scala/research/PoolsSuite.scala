@@ -34,4 +34,29 @@ class PoolsSuite extends munit.FunSuite {
     assertEquals(a.schedule, b.schedule)
     assertEquals(a.slots.keySet, b.slots.keySet)
   }
+
+  /** the palindromes the grids found (src/test/resources/pools-counterexamples.txt) */
+  private def counterexamples: Vector[(String, String)] = {
+    val src = scala.io.Source.fromResource("pools-counterexamples.txt")
+    try { src.getLines().filterNot(_.startsWith("#")).map { l => val parts = l.split(" \\| "); (parts(0), parts(2).trim) }.toVector } finally { src.close() }
+  }
+  private val finalOptions = RolePal.Options(youngReport = false, fuseIn = true, compact = true, endAsEntry = true, endOnce = true)
+
+  test("every counterexample is a palindrome, fails its configuration, and is answered by the final machine (role 15/4 A at W0 32)") {
+    val cs = counterexamples
+    assert(cs.size >= 5)
+    val fin = RolePal.machine(15, 4, 32, finalOptions)
+    for ((cfg, w) <- cs) {
+      assert(LpsPal.isPal(w), cfg)
+      val failing: Lps.Machine = cfg match {
+        case c if c.startsWith("gap 10/13") => OverlapPal.machine(10, 13, 16, G)
+        case c if c.startsWith("model young 14 / old 6") => OverlapPal.machine(14, 14, 16, G, 6)
+        case c if c.startsWith("model young 15 / old 3") => OverlapPal.machine(15, 15, 16, G, 3)
+        case c if c.startsWith("model young 14 / old 4") => OverlapPal.machine(14, 14, 16, G, 4)
+        case _ => RolePal.machine(15, 4, 24, finalOptions)
+      }
+      assert(!Lps.run(failing, w).outputs.last, s"$cfg should answer false on its counterexample")
+      assertEquals(Lps.run(fin, w).outputs, OverlapPal.expectedOutputs(32, w), s"final machine on the counterexample of $cfg")
+    }
+  }
 }
