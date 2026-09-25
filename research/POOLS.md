@@ -184,6 +184,12 @@ max RHS 65,536 (`metrics/pools-inline-curve-y15-o4.md`):
 | ×16 | 946 | 3,179,139 | 13,814,327 |
 | ×32 | 878 | 6,346,794 | 26,552,136 |
 
+> **Correction (2026-09-26, STRATEGY.md §3b).** This grammar and the machine it prints (15/4 A at W₀ 32) answer **false** on
+> the 79-letter palindrome `bbbabaabaaaaabaaaaabbababaaaabaaaaaabbaaabbaaaaaabaaaabababbaaaaabaaaaabaababbb` (Rust runner,
+> measured): `endonce` loses a tick of the first B life's 16-tick young window and the old pool of 4 does not catch up. The
+> three seeds below never contained such a word. The replacement is `out/anchors-role-y13-o4-w64-n999.peg.gz` (13/4, β 7/16,
+> W₀ 64), validated also on every length ≤ 2,049.
+
 **The 999-rule grammar** (`out/pools-role-y15-o4-n999.peg.gz`, `metrics/pools-role-y15-o4-n999.json`, measured): 999 rules,
 1,945,495 rhs nodes, max RHS 16,224, 7,958,678 rendered bytes, 42,936 distinct DAG nodes, 275,293 bytes gzipped; sha256 of
 the `.peg` `eef35388…77656c1`, of the `.peg.gz` `102db800…108f0a958`. Checks: re-parsed, it equals the oracle on all 1,023

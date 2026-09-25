@@ -11,6 +11,9 @@ The role machine 15/4 with the options noacc fuse compact endent endonce: 4,216 
 inliner gives 1,377 (×2 nodes), 1,194 (×3), 1,120 (×4), **999 (×9.75, 1,945,495 rhs nodes, 8.0 MB)**, 946 (×16), 878
 (×32). The handoff prefers a compact grammar (×2–×3); that is 195–378 rules away.
 
+**Correction (§3b): that machine, and both 999-rule grammars made from it, answer false on a 79-letter palindrome.** The
+grammar that replaces them (13/4, β 7/16, W₀ 64): 999 rules at ×4.40, 2,984,353 bytes; ×2 1,257, ×3 1,090, ×4 1,018.
+
 ## 1. Diagnosis: what survives the inliner, and why (measured)
 
 `probes/survivors.py out/pools-role-y15-o4-n999.peg.gz` — the 999 rules by kind:
@@ -128,6 +131,132 @@ changes no core and so no per-layer cost.
 
 Updated estimate (S1 measured + S2′ + S3 + S4): ×4 N ≈ 950–1,000, ×3 ≈ 1,030–1,080. N < 1,000 at ×4 is the realistic
 target of this plan; ×3 needs the ×2 question of §4 as well.
+
+## 3b. S3 and S2′, implemented (measured)
+
+### S3 — balanced anchors: young 15 → 13
+
+`OverlapPal.Sched(num, den)` (β = num/den; `beta=7/16` on `pool-grid`, `overlap-profile`, `lps-code`). β = 1/2 builds the
+original controller (the default grammars keep their sha256). Any other β in (1/3, 1/2) uses a **staged clock** in the
+controller: at every dyadic tick P (from W₀/2 on) a walker `clk` walks down, one stage after the other, from saved dyadic
+cells P/2^j (a history `h1 … hJ` shifted at every dyadic tick); the ends of three intervals are the events — at
+(2 − 2β)P `cA` saves the replay cell of the next A, at (1 + β)P family B is born (only while A is young, `ya`), at 4βP
+`cB` saves the replay cell of the next B. The stages are the binary digits of the intervals (1 − 2β)P, (3β − 1)P,
+(3β − 1)P; for 7/16: P/8 | P/4 + P/16 | P/4 + P/16 (5 stages, W₀ ≥ 32). Replays are exact (k_A = (1 − β)W, k_B = 2βW).
+Only the controller and IN change; no core, so no per-layer cost. `AnchorSchedSuite` (measured): the stages and anchors;
+β = 1/2 builds the original controller; the model at 7/16 (W₀ 32) and 3/8 (W₀ 16) has the oracle's outputs and a clean
+profile (births, replay cells, answering bank); the role machine at 7/16 has a clean strict role profile; through the
+code backend the PEG's rules agree with the interpreter across the anchors 32, 46, 64.
+
+Letters per tick in the young window (A = 2/(α−1), B = 2α/(2−α)): 4 and 6 at α = 3/2, 4.57 and 5.11 at 23/16, 5.33 and 4.4
+at 11/8. The proportional model from the unlimited machine (A 10 steps at 4 letters, B 14 at 6: steps ≈ 2 × letters + 2)
+predicted young 13 at 23/16. Rates on the old-limit model, W₀ 32, the big set (random 2,000 ≤ 1,025 + adversarial ≤ 600,
+switch ≤ 1,025, structured ≤ 1,025; 3,345 words):
+
+| β | 12/12/4 | 12/12/5 | 12/12/6 | 13/13/3 | 13/13/4 | 14/14/4 |
+|---|---|---|---|---|---|---|
+| 1/2 (POOLS) | — | — | — | — | — | FAIL (15/15/4 is the minimum) |
+| 7/16 | FAIL n 538 | FAIL n 261 | FAIL n 261 | FAIL n 71 | **PASS** | PASS |
+| 3/8 | — | — | — | — | FAIL n 363 | PASS |
+
+Young 12 fails whatever the old pool (the young B bank itself is late at n 261, h 184): **β = 7/16 gives young 13**, as
+predicted; 3/8 gives 14.
+
+The role machine `r13/4` (configuration A, `Code` by star, β = 7/16, W₀ 32) passes seed 7 (3,000 random ≤ 2,049 + three
+families ≤ 200; 3,754 words) and seed 11 (5,000 random ≤ 2,049 + the three families; 6,345 words), **but fails the big
+set at n = 71** (the first B life, h = 46, young window 18 ticks): `endonce` loses up to one tick of a young window, and
+the shortest window at W₀ 32 cannot spare it (without `endonce`, with old 5, or at young 14 the word passes). The same
+mechanism as the n = 42 failure at W₀ 16 in POOLS.
+
+Its compact grammar is **3,812 rules** (15/4 A: 4,216) and its curve:
+
+| node budget | 15/4, β 1/2 (E1) | 13/4, β 7/16 |
+|---|---:|---:|
+| ×2 | 1,368 | 1,243 |
+| ×3 | 1,184 | 1,077 |
+| ×4 | 1,105 | 1,005 |
+| ×8 | 1,003 | 911 |
+| ×16 | 926 | 838 |
+| N < 1,000 | ×8.28, 1,652,383 nodes | ×4.11, 674,895 nodes (2,806,652 bytes) |
+
+The gain (−100 at ×4, −125 at ×2) is larger than two young layers' core (−84): every register's dispatch covers its
+domain's sites, and the domains lose two sites each.
+
+### E2 and S2′ — a mismatch step unfolds its own gap
+
+E2 (`StepKinds`, "GNODE pushes"; role 15/4 A without `fuse`, W₀ 32): a mismatch that pushes `GNODE(cur, L)` is 9.2 % of
+the young busy steps and 8.3 % of the old ones on random words (400 ≤ 1,025), 0.3 % and 0.1 % on the adversarial family
+(≤ 600). Every such step is followed by `gPopG`, so S2′ saves exactly these steps.
+
+`GapKmp.Core(unfold)` (`unfold` flag): the mismatch step allocates `LNODE(cur, L)` and `KNODE(LNODE, K, cur.hR, cur.hK)`
+(the K-node site is unused by a transition) and sets `L := cur.hL`. `UnfoldSuite` (measured): the oracle's outputs on all
+words ≤ 10 and a clean profile on the switch/structured words ≤ 129; PEG = interpreter with the old backend (≤ 6) and the
+code backend (configuration A, ≤ 12 at 1/1, ≤ 11 at 2/2); no GNODE is pushed any more; configuration A with unfold has a
+clean strict role profile. Rates on the model (β 7/16, big set): 12/12/4 FAIL (n 71), **12/12/5 PASS, 13/13/3 PASS**. On
+the n = 71 word the role machine with `endonce` passes at 13/4 and 13/3 with unfold, fails at 12/5 and 12/4.
+
+### The every-length family, and a wrong answer of the POOLS grammar
+
+The rate searches of POOLS and of this section used the four families (random, adversarial, switch, structured) on three
+seeds. The switch family is built around the anchors (bOf(W), 2W, 2bOf(W) ± 1), and `probes/runner_words.py` doubles its
+lengths, so neither reaches every length. `OverlapProfile.everyLengthWords` (`pool-grid … every=<maxLen>`) takes the
+runner's seven kinds of words at **every** length 3 … maxLen (`b a^(n-2) b` and its flip, the Thue–Morse palindrome and a
+flip at n/3, period 3, `a^i b a^j b a^i`, a random palindrome; 7,158 words up to 1,025).
+
+**The role machine of POOLS (15/4 A, β 1/2, W₀ 32) fails it at n = 79**: bank B of the first B life (h 48, young window
+16 ticks) has not caught up at the end of the 79-letter random palindrome
+`bbbabaabaaaaabaaaaabbababaaaabaaaaaabbaaabbaaaaaabaaaabababbaaaaabaaaaabaababbb`. Both 999-rule grammars made from it
+(`out/pools-role-y15-o4-n999.peg.gz` on main and `out/pools-role-y15-o4-star-n999.peg.gz` of E1) answer **false** on it
+in the Rust runner (measured). Cause: `endonce` lets only the first young step of a tick end a build, so a young window can
+lose a tick; in the shortest window this delays the handover and the old pool of 4 does not catch up (without `endonce`,
+at W₀ 64, with old 5 or with young 16 the word passes). The three seeds never contained such a word: the validation was a
+finite observation, and it missed this one.
+
+The every-length family, measured on the role machine (configuration A unless stated, W₀ 32 unless stated):
+
+| configuration | every = 1,025 |
+|---|---|
+| 15/4 A, β 1/2 (POOLS) | FAIL n 79 (h 48) |
+| 13/3 + unfold, β 7/16 | FAIL n 177 (h 92, Thue–Morse) |
+| 13/3 + unfold − endonce, β 7/16 | FAIL n 361 (h 184, Thue–Morse) |
+| 13/3 + unfold, β 7/16, W₀ 64 | FAIL n 177 |
+| 12/4 + unfold, β 7/16, W₀ 64 | FAIL n 155 (h 92) |
+| 13/4 − endonce, β 7/16 | PASS |
+| 13/4 + unfold, β 7/16 | PASS |
+| 14/3 + unfold, β 7/16 | PASS |
+| **13/4, β 7/16, W₀ 64** | **PASS** |
+
+(12/3 + unfold at β 13/32, W₀ 64, which passed the model, fails the role machine on all three seeds and the runner's
+121-letter Thue–Morse palindrome.) An old pool of 3 is broken by Thue–Morse palindromes whatever the other options.
+
+### The chosen grammar: 13/4 A, β 7/16, W₀ 64
+
+Role machine 13/4, configuration A (noacc fuse compact endent endonce), `Code` by star, β = 7/16, W₀ = 64 (first machine
+answer 92; 19 colours). Rates (measured): the three seeds (3,345 + 3,754 + 6,345 words), every = 1,025 with seeds 5 and 7
+(7,158 + 7,161 words) and every = 2,049 (14,326 words) all pass; the machine answers every counterexample of
+`src/test/resources/anchors-counterexamples.txt` (eight configurations, the POOLS machine included) and of POOLS.
+
+`out/anchors-role-y13-o4-w64.peg.gz` (compact: 3,860 rules, 164,724 rhs nodes) and
+`out/anchors-role-y13-o4-w64-n999.peg.gz`: **999 rules, 724,780 rhs nodes (×4.40 of its compact grammar), max RHS 21,425,
+2,984,353 bytes, 167,877 bytes gzipped** (`metrics/anchors-role-y13-o4-w64-n999.json`; sha256 of the `.peg`
+`2443c690…1bfc0843`). Checks: re-parsed, it equals the oracle on all 1,023 words ≤ 9; the Rust runner gives 0 mismatches
+on the 140 raw words of `probes/runner_words.py 24 600` and on the 16 palindromes the grids found. Against the POOLS grammar
+(×9.75, 7,958,678 bytes) it is 2.7 times smaller at the same N, and its curve is ×2 1,257, ×3 1,090, ×4 1,018
+(15/4 with E1: 1,368, 1,184, 1,105). All the curves: `out/metrics/anchors-inline-curves.md`.
+
+### Where this leaves the ranking
+
+| lever | status |
+|---|---|
+| S1 non-recursive codes | adopted |
+| S3 anchors at β 7/16 | **adopted**: young 15 → 13 |
+| W₀ 64 | adopted: keeps `endonce` (−23 at ×4 against dropping it) |
+| S2′ unfold | implemented and tested; no gain in a validated configuration yet (it made old 3 and young 12 pass the seeds, but not the every-length family) |
+| S4 old pool 3 | rejected: Thue–Morse palindromes break it |
+| S2 two-letter match | rejected (E0) |
+
+N < 1,000 at ×4 is 19 rules away. The next levers: `unfold` with a margin that does not rely on old 3 (e.g. 12/4 at
+β 13/32 or 3/8 on the every-length family); cheaper `endonce`-free build ends; S5.
 
 ## 4. The handoff's other routes, re-evaluated with these numbers
 

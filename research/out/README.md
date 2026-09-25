@@ -1,6 +1,16 @@
 # Generated grammars
 
-- `pools-role-y15-o4-star-n999.peg.gz` — **the smallest 999-rule grammar (2026-09-26, `STRATEGY.md` E1)**: the same machine as
+- `anchors-role-y13-o4-w64-n999.peg.gz` — **the current best (2026-09-26, `STRATEGY.md` §3b): 999 rules.** Role machine
+  13/4, configuration A, `Code` by star, anchors at β = 7/16 (the staged clock), W₀ = 64 (first machine answer 92), inlined at
+  ×4.40: 724,780 rhs nodes, max rhs 21,425, 2,984,353 bytes (167,877 gzipped). Re-parsed = oracle on all words ≤ 9; Rust runner
+  on the 140 raw words and the 16 palindromes the grids found: 0 mismatches. Rates: three seeds and every length ≤ 2,049.
+  `metrics/anchors-role-y13-o4-w64-n999.json`, curves of all S3/S2′ configurations `metrics/anchors-inline-curves.md`.
+  Reproduce: `run lps-code export role 13 4 64 A.peg noacc fuse compact endent endonce star beta=7/16` then
+  `run lps-inline-curve A.peg 16 65536 curve.md 1000 out.peg out.json`.
+- `anchors-role-y13-o4-w64.peg.gz` — the same machine before inlining: 3,860 rules, 164,724 rhs nodes.
+- **The two `pools-role-y15-o4*-n999` grammars below answer false on a 79-letter palindrome** (STRATEGY.md §3b); kept for
+  the record.
+- `pools-role-y15-o4-star-n999.peg.gz` — the smallest 999-rule grammar of E1 (2026-09-26, `STRATEGY.md`): the same machine as
   below with non-recursive code helpers (`lps-code … star`), inlined at ×8.28: 999 rules, 1,652,383 rhs nodes, max rhs
   12,773, 6,754,563 bytes. Re-parsed = oracle on all words ≤ 9; Rust runner on the 140 raw words: 0 mismatches.
   `metrics/pools-role-y15-o4-star-n999.json`, curve `metrics/pools-inline-curve-y15-o4-star.md`.

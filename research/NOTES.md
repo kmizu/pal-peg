@@ -241,3 +241,14 @@ rules from ×4 on (999 at ×8.28, 6.75 MB). A step-kind profile shows the young 
 pattern build (0.9–1.2 pops per pattern letter) and that a two-letter match would save only 4.5–10.5 % — rejected. Next:
 size the build pops (E2), then balance the anchors on the model (Task 3).
 
+
+## 11. Balanced anchors, and a wrong answer found (2026-09-26, `STRATEGY.md` §3b)
+
+The anchors of family B moved from 3W/2 to 23W/16 by a staged clock in the controller (β = 7/16): the young windows then
+need 4.57 and 5.11 letters per tick instead of 4 and 6, and the young pool falls from 15 to 13 on the model and the role
+machine. Fewer young layers shrink every register's dispatch domain too, so the compact grammar loses 356 rules and the
+curve 87–111 at ×2–×4. A new every-length family (the runner's words at every length) then showed that the POOLS machine
+— and both 999-rule grammars made from it — answer false on a 79-letter palindrome: `endonce` loses a tick of the first B
+life's 16-tick window. The replacement (13/4, β 7/16, W₀ 64, which keeps `endonce` safe) passes three seeds and every length
+≤ 2,049: 999 rules at 2.98 MB, ×4 1,018. `unfold` (a mismatch unfolds its own gap) is implemented but its gains (old 3,
+young 12) do not survive the every-length family.

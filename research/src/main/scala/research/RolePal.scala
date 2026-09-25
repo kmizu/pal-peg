@@ -31,7 +31,8 @@ object RolePal {
   /** size options (POOLS.md §4): `youngReport = false` drops the young role's `acc` (never read: the old role's push
     * clears it on the handover tick); `mergeTmp` merges `rv`/`ks`; `fuseIn` composes the first old and young steps into IN */
   final case class Options(youngReport: Boolean = true, mergeTmp: Boolean = false, fuseIn: Boolean = false, compact: Boolean = false,
-                           sharedRK: Boolean = false, endAsEntry: Boolean = false, endOnce: Boolean = false, rearInP3: Boolean = false) {
+                           sharedRK: Boolean = false, endAsEntry: Boolean = false, endOnce: Boolean = false, rearInP3: Boolean = false,
+                           sched: OverlapPal.Sched = OverlapPal.Half, unfold: Boolean = false) {
     require(!endOnce || compact, "endOnce needs the compact states")
   }
   /** the registers and bits the handover copies from the young role to the old one */
@@ -49,7 +50,7 @@ object RolePal {
     val tags: GapKmp.Tags = tagsOf(opts)
     private def mk(endStep: Boolean) = new GapKmp.Core(M, tags, GapKmp.Feed(n("src"), n("rc"), n("pendF"), n("pendB"), n("pendN"), n("rev")),
       matchOnly = !young, report = report, mergeTmp = opts.mergeTmp, compact = opts.compact, sharedRK = opts.sharedRK,
-      endAsEntry = opts.endAsEntry, endStep = endStep)
+      endAsEntry = opts.endAsEntry, endStep = endStep, unfold = opts.unfold)
     val core = mk(endStep = true)
     /** `endOnce`: the steps after the first young step of a tick leave the end of the build to the next tick's first step */
     val coreRest = if (young && opts.endOnce) { mk(endStep = false) } else { core }
@@ -86,10 +87,10 @@ object RolePal {
   /** on a birth the young role is reset for the newborn bank (`OverlapPal.Bank.in`: the birth cell is the pattern
     * source, the replay countdown the saved dyadic pointer — the half clock for family A, `pw` for family B);
     * otherwise this tick's letter joins its FIFO */
-  def youngIn(y: Role): Prog = {
+  def youngIn(y: Role, sc: OverlapPal.Sched = OverlapPal.Half): Prog = {
     val p = y.M.prog()
     p.when(birth) { u =>
-      y.core.reset(u); u.set(y.n("src"), In); u.set(y.n("rc"), Ite(Bit("b0"), Reg("clk"), Reg("pw")))
+      y.core.reset(u); u.set(y.n("src"), In); u.set(y.n("rc"), Ite(Bit("b0"), OverlapPal.rcOf(0, sc), OverlapPal.rcOf(1, sc)))
       u.set(y.n("pendF"), Null); u.set(y.n("pendB"), Null); u.set(y.n("pendN"), Null); u.bit(y.n("rev"), False)
     }
     y.pushes(p, not(birth))
@@ -103,11 +104,11 @@ object RolePal {
       "pools >= 1, minAnchor a power of two >= 2 or 3 * 2^k (k >= 2)")
     val y = new Role("y_", young = true, opts)
     val o = new Role("o_", young = false, opts)
-    val regs = OverlapPal.ctlRegs ++ y.regs ++ o.regs
-    val bits = OverlapPal.ctlBits(minAnchor) ++ y.bits ++ o.bits
+    val regs = OverlapPal.ctlRegsOf(opts.sched) ++ y.regs ++ o.regs
+    val bits = OverlapPal.ctlBitsOf(minAnchor, opts.sched) ++ y.bits ++ o.bits
     val names = regs.map(_._1)
     // IN = handover, then the young reset/push, then the old push (sequential: each reads the previous one's updates)
-    val in = Lpm.fuse(Lpm.fuse(handover(y, o, opts).build(names, bits), youngIn(y).build(names, bits)), oldIn(o).build(names, bits))
+    val in = Lpm.fuse(Lpm.fuse(handover(y, o, opts).build(names, bits), youngIn(y, opts.sched).build(names, bits)), oldIn(o).build(names, bits))
     val yu = y.core.universal(_ => ()).build(names, bits)
     val yuRest = y.coreRest.universal(_ => ()).build(names, bits)
     val ou = o.core.universal(_ => ()).build(names, bits)
@@ -115,7 +116,7 @@ object RolePal {
     // order of an old and a young step does not matter)
     val in1 = if (opts.fuseIn) { Lpm.fuse(Lpm.fuse(in, ou), yu) } else { in }
     // with endOnce the first young step of a tick (fused into IN, or the slot YUF) is the only one that ends a build
-    val slots = Map("CT" -> OverlapPal.ct(minAnchor).build(names, bits), "IN" -> in1, "YUF" -> yu, "YU" -> yuRest, "OU" -> ou,
+    val slots = Map("CT" -> OverlapPal.ct(minAnchor, opts.sched).build(names, bits), "IN" -> in1, "YUF" -> yu, "YU" -> yuRest, "OU" -> ou,
       "OUT" -> OverlapPal.outOf(Bit("o_acc")).build(names, bits))
     val youngSlots = if (opts.fuseIn) { Vector.fill(ky - 1)("YU") } else if (opts.endOnce) { Vector("YUF") ++ Vector.fill(ky - 1)("YU") } else { Vector.fill(ky)("YU") }
     val no = if (opts.fuseIn) { ko - 1 } else { ko }

@@ -64,7 +64,8 @@ class PoolsSuite extends munit.FunSuite {
     val m = RolePal.machine(15, 4, 32, RolePal.Options(youngReport = false, compact = true, endAsEntry = true, endOnce = true))
     for (w <- OverlapProfile.randomWords(10, 300, 5L) ++ OverlapProfile.adversarialWords(120).take(10)) {
       val pr = OverlapProfile.profile(m, w, 32, strict = true, layout = OverlapProfile.Roles)
-      def busy(k: Map[String, Long]): Long = k.filter(_._1 != "idle").values.sum
+      // "+..." keys are side counters (E2: GNODE pushes), not step kinds
+      def busy(k: Map[String, Long]): Long = k.filter(e => e._1 != "idle" && !e._1.startsWith("+")).values.sum
       def total(h: Map[Int, Int]): Long = h.map { case (k, c) => k.toLong * c }.sum
       assertEquals(busy(pr.kinds.young), total(pr.demand.youngHist), s"young '${w.take(30)}' (${w.length})")
       assertEquals(busy(pr.kinds.old), total(pr.demand.oldHist), s"old '${w.take(30)}' (${w.length})")
