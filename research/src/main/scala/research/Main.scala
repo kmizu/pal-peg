@@ -501,17 +501,20 @@ object Main {
       // pal3: LpsWarmup.machine(m, f, W0), fallback below 2 W0; overlap: OverlapPal.machine(a, b, W0), fallback below 3 W0 / 2
       val trie = rest.contains("trie")
       // role options: noacc (no young acc), tmp (rv/ks merged), fuse (first old and young steps fused into IN)
-      val roleFlags = Set("noacc", "tmp", "fuse", "compact", "rk", "endent", "endonce", "p3")
+      val roleFlags = Set("noacc", "tmp", "fuse", "compact", "rk", "endent", "endonce", "p3", "star", "unfold")
       val ropts = RolePal.Options(youngReport = !rest.contains("noacc"), mergeTmp = rest.contains("tmp"), fuseIn = rest.contains("fuse"), compact = rest.contains("compact"),
-        sharedRK = rest.contains("rk"), endAsEntry = rest.contains("endent"), endOnce = rest.contains("endonce"), rearInP3 = rest.contains("p3"))
-      val args = rest.filter(x => x != "trie" && !roleFlags(x))
+        sharedRK = rest.contains("rk"), endAsEntry = rest.contains("endent"), endOnce = rest.contains("endonce"), rearInP3 = rest.contains("p3"),
+        sched = OverlapPal.schedArg(rest), unfold = rest.contains("unfold"))
+      val args = rest.filter(x => x != "trie" && !roleFlags(x) && !x.startsWith("beta="))
       val isOverlap = kind == "overlap" || kind == "gap" || kind == "role"
       val coreKind: OverlapPal.CoreKind = if (kind == "gap") { OverlapPal.GapCore } else { OverlapPal.Kmp2Core }
       def mk(ms: Int, fs: Int, w0: Int): Lps.Machine =
         if (kind == "role") { RolePal.machine(ms, fs, w0, ropts) } else if (isOverlap) { OverlapPal.machine(ms, fs, w0, coreKind) } else { LpsWarmup.machine(ms, fs, w0) }
-      def firstAnswer(w0: Int): Int = if (isOverlap) { OverlapPal.firstAnswer(w0) } else { LpsWarmup.firstAnswer(w0) }
-      def opts(w0: Int) = LpsCode.Options(fallbackBelow = Some(firstAnswer(w0)), minBirth = w0, dispatch = if (trie) { LpsCode.Trie } else { LpsCode.Direct })
-      def colours(ms: Int, fs: Int): Int = LpsCode.compileMeta(mk(ms, fs, 2)).coloring.count
+      def firstAnswer(w0: Int): Int = if (isOverlap) { OverlapPal.firstAnswer(w0, ropts.sched) } else { LpsWarmup.firstAnswer(w0) }
+      def opts(w0: Int) = LpsCode.Options(fallbackBelow = Some(firstAnswer(w0)), minBirth = w0, dispatch = if (trie) { LpsCode.Trie } else { LpsCode.Direct },
+        codeByStar = rest.contains("star"))
+      // the colours do not depend on the controller; the staged clock needs its smallest W0
+      def colours(ms: Int, fs: Int): Int = LpsCode.compileMeta(mk(ms, fs, if (ropts.sched.half) { 2 } else { math.max(8, ropts.sched.minW0) })).coloring.count
       // W0: "auto" = the power of two >= colours; "auto3" = the smallest 3 * 2^k (k >= 2) >= colours (a base-3 clock, RolePal)
       def w0Of(ms: Int, fs: Int, spec: String): Int = spec match {
         case "auto" => SiteCode.nextPow2(math.max(colours(ms, fs), 2))
@@ -607,9 +610,15 @@ object Main {
       val minAnchor = minAnchorS.toInt
       // an optional "seed=<n>" among the configurations: the seed of the random words (default 21)
       val seed = configs.collectFirst { case x if x.startsWith("seed=") => x.drop(5).toLong }.getOrElse(21L)
-      val families = Vector("random" -> OverlapProfile.randomWords(randCountS.toInt, randMaxS.toInt, seed), "adversarial" -> OverlapProfile.adversarialWords(advS.toInt),
-        "switch" -> OverlapProfile.switchWords(switchS.toInt), "structured" -> LpsProfile.structuredWords(structS.toInt))
-      for (cfg <- configs if !cfg.startsWith("seed=")) {
+      // an optional "beta=<num>/<den>": the anchor schedule (STRATEGY S3; default 1/2)
+      val sc = OverlapPal.schedArg(configs)
+      val families = Vector("random" -> OverlapProfile.randomWords(randCountS.toInt, randMaxS.toInt, seed), "adversarial" -> OverlapProfile.adversarialWords(advS.toInt, sc),
+        "switch" -> OverlapProfile.switchWords(switchS.toInt, sc), "structured" -> LpsProfile.structuredWords(structS.toInt)) ++
+        // an optional "every=<maxLen>": the runner words at every length (OverlapProfile.everyLengthWords)
+        // (its random palindromes use seed 5 unless a seed is given)
+        configs.collectFirst { case x if x.startsWith("every=") =>
+          "every" -> OverlapProfile.everyLengthWords(x.drop(6).toInt, configs.collectFirst { case y if y.startsWith("seed=") => y.drop(5).toLong }.getOrElse(5L)) }.toVector
+      for (cfg <- configs if !cfg.startsWith("seed=") && !cfg.startsWith("beta=") && !cfg.startsWith("every=")) {
         // a/b/old: the old-limit model; r<ky>/<ko>: the role machine
         val t0 = System.nanoTime()
         val r = if (cfg.startsWith("r")) {
@@ -617,16 +626,18 @@ object Main {
           val (sizes, flags) = cfg.drop(1).split(":", 2) match { case Array(a) => (a, Set.empty[String]); case Array(a, f) => (a, f.split(",").toSet) }
           val Array(ky, ko) = sizes.split("/").map(_.toInt)
           val ro = RolePal.Options(youngReport = !flags("noacc"), mergeTmp = flags("tmp"), fuseIn = flags("fuse"), compact = flags("compact"),
-            sharedRK = flags("rk"), endAsEntry = flags("endent"), endOnce = flags("endonce"), rearInP3 = flags("p3"))
-          OverlapProfile.grid(cfg, RolePal.machine(ky, ko, minAnchor, ro), minAnchor, true, families, threadsS.toInt, OverlapProfile.Roles, ro.fuseIn)
+            sharedRK = flags("rk"), endAsEntry = flags("endent"), endOnce = flags("endonce"), rearInP3 = flags("p3"), sched = sc, unfold = flags("unfold"))
+          OverlapProfile.grid(cfg, RolePal.machine(ky, ko, minAnchor, ro), minAnchor, true, families, threadsS.toInt, OverlapProfile.Roles, ro.fuseIn, sc)
         } else {
-          val Array(a, b, o) = cfg.split("/").map(_.toInt)
+          // a/b/old[:unfold]
+          val (sizes, mflags) = cfg.split(":", 2) match { case Array(x) => (x, Set.empty[String]); case Array(x, f) => (x, f.split(",").toSet) }
+          val Array(a, b, o) = sizes.split("/").map(_.toInt)
           val limit = if (o <= 0) { Int.MaxValue } else { o }
-          OverlapProfile.grid(cfg, OverlapPal.machine(a, b, minAnchor, OverlapPal.GapCore, limit), minAnchor, limit < Int.MaxValue, families, threadsS.toInt)
+          OverlapProfile.grid(cfg, OverlapPal.machine(a, b, minAnchor, OverlapPal.GapCore, limit, sc, mflags("unfold")), minAnchor, limit < Int.MaxValue, families, threadsS.toInt, sc = sc)
         }
         val secs = (System.nanoTime() - t0) / 1e9
         val verdict = if (r.pass) { s"PASS (${r.words} words)" } else { s"FAIL after ${r.words} words: ${r.firstBad.map { case (w, v) => s"${w.take(60)}${if (w.length > 60) "…" else ""} [len ${w.length - w.indexOf(": ") - 2}] $v" }.getOrElse("")}" }
-        println(f"grid $cfg minAnchor $minAnchor: $verdict ($secs%.0f s)")
+        println(f"grid $cfg minAnchor $minAnchor${sc.label}: $verdict ($secs%.0f s)")
         if (r.pass) { println(s"  ${r.demand.summary}") }
         r.firstBad.foreach { case (w, _) => java.nio.file.Files.write(java.nio.file.Paths.get(s"/tmp/pool-grid-bad-${cfg.replace('/', '-')}.txt"), (w.drop(w.indexOf(": ") + 2) + "\n").getBytes("UTF-8")) }
       }
@@ -637,26 +648,33 @@ object Main {
       // an optional "dump=<path>": the violating words, one per line
       val dump = rest0.collectFirst { case x if x.startsWith("dump=") => x.drop(5) }
       val role = rest0.contains("role")
-      val rest = rest0.filterNot(x => x == "gap" || x == "role" || x.startsWith("old=") || x.startsWith("dump="))
+      // role options for the role machine (as in lps-code): noacc fuse compact endent endonce
+      val roleOpt = Set("noacc", "fuse", "compact", "endent", "endonce", "unfold")
+      val sc = OverlapPal.schedArg(rest0)
+      val ro = RolePal.Options(youngReport = !rest0.contains("noacc"), fuseIn = rest0.contains("fuse"), compact = rest0.contains("compact"),
+        endAsEntry = rest0.contains("endent"), endOnce = rest0.contains("endonce"), sched = sc, unfold = rest0.contains("unfold"))
+      val rest = rest0.filterNot(x => x == "gap" || x == "role" || roleOpt(x) || x.startsWith("old=") || x.startsWith("dump=") || x.startsWith("beta="))
       val dumped = Vector.newBuilder[String]
       val coreKind: OverlapPal.CoreKind = if (rest0.contains("gap")) { OverlapPal.GapCore } else { OverlapPal.Kmp2Core }
       val (a, b) = (rest(0).toInt, rest(1).toInt)
       val (words, minAnchor) = rest(2) match {
         case "structured" => (LpsProfile.structuredWords(rest(3).toInt), rest.lift(4).map(_.toInt).getOrElse(2))
-        case "switch" => (OverlapProfile.switchWords(rest(3).toInt), rest.lift(4).map(_.toInt).getOrElse(2))
-        case "adversarial" => (OverlapProfile.adversarialWords(rest(3).toInt), rest.lift(4).map(_.toInt).getOrElse(2))
+        case "switch" => (OverlapProfile.switchWords(rest(3).toInt, sc), rest.lift(4).map(_.toInt).getOrElse(2))
+        case "adversarial" => (OverlapProfile.adversarialWords(rest(3).toInt, sc), rest.lift(4).map(_.toInt).getOrElse(2))
         case "random" => (OverlapProfile.randomWords(rest(3).toInt, rest(4).toInt), rest.lift(5).map(_.toInt).getOrElse(2))
         case w => (Vector(w), rest.lift(3).map(_.toInt).getOrElse(2))
       }
-      val m = if (role) { RolePal.machine(a, b, minAnchor) } else { OverlapPal.machine(a, b, minAnchor, coreKind, oldLimit) }
+      val m = if (role) { RolePal.machine(a, b, minAnchor, ro) } else { OverlapPal.machine(a, b, minAnchor, coreKind, oldLimit, sc, rest0.contains("unfold")) }
       val layout = if (role) { OverlapProfile.Roles } else { OverlapProfile.Banks }
       var bad = 0
       var maxUnits = 0
       var maxBacklog = 0
       var demand = OverlapProfile.Demand()
+      var kinds = OverlapProfile.StepKinds()
       for (w <- words) {
-        val pr = OverlapProfile.profile(m, w, minAnchor, role || oldLimit < Int.MaxValue, layout)
+        val pr = OverlapProfile.profile(m, w, minAnchor, role || oldLimit < Int.MaxValue, layout, role && ro.fuseIn, sc)
         demand = demand.merge(pr.demand)
+        kinds = kinds.merge(pr.kinds)
         maxUnits = math.max(maxUnits, pr.maxUnitsPerTick)
         maxBacklog = math.max(maxBacklog, pr.lives.map(_.maxBacklog).maxOption.getOrElse(0))
         if (words.size == 1) { println(pr.table) }
@@ -665,6 +683,7 @@ object Main {
       }
       println(s"overlap${if (role) "+role" else if (coreKind == OverlapPal.GapCore) "+gap" else ""}${if (oldLimit < Int.MaxValue) s" old<=$oldLimit" else ""} $a/$b minAnchor $minAnchor: ${words.size} words, $bad with violations, max units in a tick $maxUnits, max backlog $maxBacklog")
       println(demand.summary)
+      println(kinds.summary)
       dump.foreach(p => java.nio.file.Files.write(java.nio.file.Paths.get(p), dumped.result().mkString("", "\n", "\n").getBytes("UTF-8")))
     case "lps-kmp2" :: rest =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(6)

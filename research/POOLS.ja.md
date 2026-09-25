@@ -112,6 +112,11 @@ core が 46 でなく 50、old の FIFO の領域（IN の 2 サイト + すべ�
 | ×16 | 946 | 3,179,139 | 13.8 MB |
 | ×32 | 878 | 6,346,794 | 26.6 MB |
 
+> **訂正（2026-09-26、STRATEGY.md §3b）。** この文法と、それが書き出す機械（W₀ 32 の 15/4 A）は、79 文字の回文
+> `bbbabaabaaaaabaaaaabbababaaaabaaaaaabbaaabbaaaaaabaaaabababbaaaaabaaaaabaababbb` に **false** を返す（Rust runner、measured）。
+> `endonce` が最初の B 族の 16 tick の young 窓で 1 tick を失い、old 4 では追いつけない。以下の 3 つの種にはこういう語が入って
+> いなかった。置き換えは `out/anchors-role-y13-o4-w64-n999.peg.gz`（13/4、β 7/16、W₀ 64）で、長さ ≤ 2,049 のすべての長さでも検証した。
+
 **999 規則の文法**（`out/pools-role-y15-o4-n999.peg.gz`）：999 規則、RHS 1,945,495 ノード、最大 RHS 16,224、7,958,678 バイト、
 DAG ノード 42,936、gzip 275,293 バイト。sha256：`.peg` `eef35388…77656c1`、`.peg.gz` `102db800…108f0a958`。検査：再パースして
 全 1,023 語 ≤ 9 でオラクルと一致、Rust runner で 140 語（24〜601 文字）不一致 0（1 語最大 4.4 秒、6,700 万歩）。

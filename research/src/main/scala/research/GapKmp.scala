@@ -86,10 +86,16 @@ object GapKmp {
     * site (a step never allocates both), so with `mergeTmp` the register `tmp` points into one site per layer and the
     * colouring does not grow; `endAsEntry`: the END cell is allocated with the ENTRY tag (its letter field null), which
     * drops the tag bit of the entry site */
+  /** `unfold` (STRATEGY.md S2'): a mismatch step (BUILD or MATCH) unfolds the gap of `cur` itself instead of pushing
+    * `GNODE(cur, L)` for the next pop step to unfold (that step is always `gPopG`): the list-node site allocates
+    * `LNODE(cur, L)`, the K-node site (unused by a transition) `KNODE(LNODE, K, cur.hR, cur.hK)`, and `L := cur.hL` — the
+    * live sequence gap(cur) ++ [cur] ++ g is the same, one step earlier. Needs separate rear and K-node sites. */
   final class Core(M: Mod, T: Tags, feed: Feed, matchOnly: Boolean = false, report: Boolean = true, mergeTmp: Boolean = false,
-                   compact: Boolean = false, sharedRK: Boolean = false, endAsEntry: Boolean = false, endStep: Boolean = true)
+                   compact: Boolean = false, sharedRK: Boolean = false, endAsEntry: Boolean = false, endStep: Boolean = true,
+                   unfold: Boolean = false)
       extends OverlapPal.BankCore {
     require(endStep || compact, "a step without the end-of-build transition needs the compact states (the pending end is a state)")
+    require(!(unfold && sharedRK), "unfold needs the K-node site in a BUILD step, which sharedRK gives to the rear cell")
     import M.*
     import T.*
     private val rvName = if (mergeTmp) { "tmp" } else { "rv" }
@@ -165,17 +171,21 @@ object GapKmp {
       val gFifoRev = And(stMatch, Or(rev, And(IsNull(pendF), not(IsNull(pendB)))))
       val gTrans = if (matchOnly) { gMatchT } else { Or(gBuildT, gMatchT) }
       val p = prog()
+      /** unfold: a transition that mismatches at an entry with a nonempty gap unfolds it in the same step */
+      val gU: C = if (unfold) { all(gTrans, not(same), not(all(IsNull(Fld(cur, 2)), IsNull(Fld(cur, 3)), IsNull(Fld(cur, 4))))) } else { False }
       // shared allocation sites, one per tag: the list node (GNODE for the mismatch sequence of a transition, LNODE
-      // otherwise), the entry (END at the end of the pattern), the K node, the R node, the queue cell
-      val lnode: E = p.site(TE.Ite(gTrans, Const(GNODE), Const(LNODE)),
+      // otherwise; with unfold GNODE only as the gap of a new entry), the entry (END at the end of the pattern), the K
+      // node, the R node, the queue cell
+      val lnode: E = p.site(if (unfold && matchOnly) { Const(LNODE) } else if (unfold) { TE.Ite(And(gBuildT, same), Const(GNODE), Const(LNODE)) } else { TE.Ite(gTrans, Const(GNODE), Const(LNODE)) },
         selectE(Vector((gRev, rearE(rv)), (gPopG, gE), (gPopR, rearE(R)), (gTakeRev, rearE(k3))), cur),
         Ite(gPopG, Fld(L, 2), Ite(Or(gPopR, gTakeRev), Null, L)), Null, Null)
       val entry: E = if (matchOnly) { Null } else { p.site(if (endAsEntry) { Const(ENTRY) } else { TE.Ite(gEnd, Const(END), Const(ENTRY)) },
         Ite(gEnd, Null, src), Ite(gEnd, lnode, Ite(same, lnode, L)), K, R) }
-      val kf1 = selectE(Vector((gPopG, lnode), (gSpl2, Fld(ks, 1)), (gSpl1, Null)), k1)
-      val kf2 = selectE(Vector((gPopG, K), (gSpl1, K), (gSpl2, K)), k2)
-      val kf3 = selectE(Vector((gPopG, Fld(gE, 4)), (gSpl2, Fld(ks, 3)), (gSpl1, Null), (gTakeRev, Null)), k3)
-      val kf4 = selectE(Vector((gPopG, Fld(gE, 3)), (gSpl1, Fld(ks, 2)), (gSpl2, Fld(ks, 4))), Null)
+      val uc = if (unfold) { Vector((gU, 0)) } else { Vector() }   // the unfold case comes first: a transition is exclusive of the pops
+      val kf1 = selectE(uc.map(c => (c._1, lnode)) ++ Vector((gPopG, lnode), (gSpl2, Fld(ks, 1)), (gSpl1, Null)), k1)
+      val kf2 = selectE(uc.map(c => (c._1, K)) ++ Vector((gPopG, K), (gSpl1, K), (gSpl2, K)), k2)
+      val kf3 = selectE(uc.map(c => (c._1, Fld(cur, 4))) ++ Vector((gPopG, Fld(gE, 4)), (gSpl2, Fld(ks, 3)), (gSpl1, Null), (gTakeRev, Null)), k3)
+      val kf4 = selectE(uc.map(c => (c._1, Fld(cur, 3))) ++ Vector((gPopG, Fld(gE, 3)), (gSpl1, Fld(ks, 2)), (gSpl2, Fld(ks, 4))), Null)
       val rearNext = Ite(all(gBuildT, same, rOnly), Null, R)   // fast4: the rear becomes [E_i]
       def rearFields(e: E, next: E): Vector[E] = if (T.rearEntry == 3) { Vector(Null, next, e, Null) } else { Vector(e, next, Null, Null) }
       val (knode, rnode) = if (sharedRK && !matchOnly) {
@@ -223,8 +233,8 @@ object GapKmp {
         val fast4 = And(same, rOnly)                // D = [R.p1, E_i]: pop R.p1, the rear becomes [E_i]
         val misZ = all(not(same), IsNull(Fld(cur, 2)), IsNull(Fld(cur, 3)), IsNull(Fld(cur, 4)))   // gap(cur) empty (E_0): D = [cur] ++ g ++ [E_i]
         u.set(n("cur"), selectE(Vector((fast1, Fld(L, 1)), (fast2, entry), (fast3, Fld(k1, 1)), (fast4, rearE(R))), cur))
-        u.set(n("L"), selectE(Vector((fast1, Fld(L, 2)), (fast3, Fld(k1, 2)), (Or(same, misZ), L)), lnode))
-        u.set(n("K"), Ite(fast3, k2, K))
+        u.set(n("L"), selectE(Vector((fast1, Fld(L, 2)), (fast3, Fld(k1, 2)), (Or(same, misZ), L)), if (unfold) { Fld(cur, 2) } else { lnode }))
+        u.set(n("K"), if (unfold) { selectE(Vector((fast3, k2), (Or(same, misZ), K)), knode) } else { Ite(fast3, k2, K) })
         u.set(n("R"), Ite(fast2, R, rnode))
         consumeSrc(u)
         popUnless(u, any(fast1, fast2, fast3, fast4, misZ), BUILD, BPOP)
@@ -245,8 +255,8 @@ object GapKmp {
         val fastR = And(same, rOnly)
         val misZ = all(not(same), IsNull(Fld(cur, 2)), IsNull(Fld(cur, 3)), IsNull(Fld(cur, 4)))
         u.set(n("cur"), selectE(Vector((fastM, Fld(L, 1)), (fastK, Fld(k1, 1)), (fastR, rearE(R))), cur))
-        u.set(n("L"), selectE(Vector((fastM, Fld(L, 2)), (fastK, Fld(k1, 2)), (full, Fld(end, 2)), (And(not(same), not(misZ)), lnode)), L))
-        u.set(n("K"), selectE(Vector((fastK, k2), (full, Fld(end, 3))), K))
+        u.set(n("L"), selectE(Vector((fastM, Fld(L, 2)), (fastK, Fld(k1, 2)), (full, Fld(end, 2)), (And(not(same), not(misZ)), if (unfold) { Fld(cur, 2) } else { lnode })), L))
+        u.set(n("K"), selectE(Vector((fastK, k2), (full, Fld(end, 3))) ++ (if (unfold) { Vector((And(not(same), not(misZ)), knode)) } else { Vector() }), K))
         u.set(n("R"), selectE(Vector((fastR, Null), (full, Fld(end, 4))), R))
         if (report) { u.bit(n("acc"), Or(B("acc"), And(full, atFrontier))) }
         u.set(feed.pendF, Fld(pendF, 2))

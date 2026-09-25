@@ -48,9 +48,15 @@ object SiteCode {
   def mask(k: Int): String = s"Mask_$k"
 
   /** Tail_0..Tail_{count-1}, Code_0..Code_{count-1}, Mask_0..Mask_{nbits(count)-1} */
-  def helpers(count: Int): Vector[(String, Expr)] = {
+  /** `codeByStar` (STRATEGY.md S1): `Code_i = (!Tail_i .)* &Tail_i` instead of `Code_i = &Tail_i / . Code_i` — the same
+    * extent (the loop stops exactly i letters before the end, and fails with the `&Tail_i` when fewer remain), but the
+    * rule no longer refers to itself, so the budgeted inliner may remove it (it never removes a self-referencing rule) */
+  def helpers(count: Int, codeByStar: Boolean = false): Vector[(String, Expr)] = {
     val tails = (0 until count).map { i => (tail(i), if (i == 0) { Not(AnyChar) } else { Seq(Vector(AnyChar, Ref(tail(i - 1)))) }) }
-    val codes = (0 until count).map { i => (code(i), Choice(Vector(And(Ref(tail(i))), Seq(Vector(AnyChar, Ref(code(i))))))) }
+    val codes = (0 until count).map { i =>
+      if (codeByStar) { (code(i), Seq(Vector(Star(Seq(Vector(Not(Ref(tail(i))), AnyChar))), And(Ref(tail(i)))))) }
+      else { (code(i), Choice(Vector(And(Ref(tail(i))), Seq(Vector(AnyChar, Ref(code(i))))))) }
+    }
     val masks = (0 until nbits(count)).map { k =>
       val is = (0 until count).filter(i => ((i >> k) & 1) == 1).map(i => Ref(tail(i)))
       (mask(k), if (is.size == 1) { is.head } else { Choice(is.toVector) })
