@@ -213,3 +213,7 @@ The two changes are independent and multiply: the site code removes the log₂(s
 pointer (and the 40-way dispatches), the overlapping anchors remove the flags worker (72% of the baseline)
 and its consumer. The remaining grammar is the two banks' universal steps × their copies (19 + 28) plus
 1,685 code rules, 62 helpers and 50 fallback rules.
+
+## 8. Under 1,000 rules: the gap matcher and the budgeted inliner (2026-09-25)
+
+See `UNDER1000.md`: the target was not reached; the best grammars are 5,902 rules (gap core 10/13, `out/under1000-gap-a10-b13.peg.gz`) and its inlined variants (`out/metrics/gap-inline/`). The obstruction is the product of the rate floor of the two-anchor architecture (≥ 10 universal-step copies at unit costs, 23 measured) and the ≈ 46 register/site rules per layer that no inlining removes.

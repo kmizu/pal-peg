@@ -4,7 +4,7 @@ package research
 object Main {
   /** the PAL machine of a command family: `lps-pal2-*` → LpsPal2, `lps-pal3-*` → LpsPal3 */
   def palMachine(cmd: String, m: Int, f: Int): Lps.Machine =
-    if (cmd.contains("overlap")) { OverlapPal.machine(m, f, 2) } else if (cmd.contains("pal3")) { LpsPal3.machine(m, f) } else { LpsPal2.machine(m, f) }
+    if (cmd.contains("gap")) { OverlapPal.machine(m, f, 2, OverlapPal.GapCore) } else if (cmd.contains("overlap")) { OverlapPal.machine(m, f, 2) } else if (cmd.contains("pal3")) { LpsPal3.machine(m, f) } else { LpsPal2.machine(m, f) }
   def main(args: Array[String]): Unit = args.toList match {
     case "sanity" :: _ =>
       val anbn = Grammar.parse("S = \"a\" S \"b\" / \"\";")
@@ -168,7 +168,7 @@ object Main {
       val fg = rest.drop(2).headOption.map(_.toInt).getOrElse(1)
       val fu = rest.drop(3).headOption.map(_.toInt).getOrElse(0)
       println(Lps.checkSim(LpsPal.machine(mg, fg, fu), maxLen).getOrElse(s"ok: slot PAL PEG agrees with the interpreter on all words of length <= $maxLen (mGroups=$mg, fGroups=$fg, fusion=$fu)"))
-    case cmd :: rest if cmd == "lps-pal2-sim" || cmd == "lps-pal3-sim" || cmd == "lps-overlap-sim" =>
+    case cmd :: rest if cmd == "lps-pal2-sim" || cmd == "lps-pal3-sim" || cmd == "lps-overlap-sim" || cmd == "lps-gap-sim" =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(8)
       val ms = rest.drop(1).headOption.map(_.toInt).getOrElse(6)
       val fs = rest.drop(2).headOption.map(_.toInt).getOrElse(24)
@@ -186,7 +186,7 @@ object Main {
         }
       }
       println(bad.getOrElse(s"ok: $cmd (mSteps=$ms, fSteps=$fs, budget=${m.budget}) agrees on all $count words of length <= $maxLen"))
-    case cmd :: rest if cmd == "lps-pal2-rand" || cmd == "lps-pal3-rand" || cmd == "lps-overlap-rand" =>
+    case cmd :: rest if cmd == "lps-pal2-rand" || cmd == "lps-pal3-rand" || cmd == "lps-overlap-rand" || cmd == "lps-gap-rand" =>
       val n = rest.headOption.map(_.toInt).getOrElse(200)
       val len = rest.drop(1).headOption.map(_.toInt).getOrElse(64)
       val ms = rest.drop(2).headOption.map(_.toInt).getOrElse(6)
@@ -204,7 +204,7 @@ object Main {
         i += 1
       }
       println(bad.getOrElse(s"ok: $cmd (mSteps=$ms, fSteps=$fs) agrees on $n random words of length <= ${2 * len + 1}"))
-    case cmd :: rest if cmd == "lps-pal2-size" || cmd == "lps-pal3-size" || cmd == "lps-overlap-size" =>
+    case cmd :: rest if cmd == "lps-pal2-size" || cmd == "lps-pal3-size" || cmd == "lps-overlap-size" || cmd == "lps-gap-size" =>
       val ms = rest.headOption.map(_.toInt).getOrElse(6)
       val fs = rest.drop(1).headOption.map(_.toInt).getOrElse(24)
       val m = palMachine(cmd, ms, fs)
@@ -218,7 +218,7 @@ object Main {
         println(f"  layer $t%2d ${if (t == 0) "-" else m.schedule(t - 1)}%-7s rules=${rs.size}%4d symbols=$sz%6d")
       }
       if (rest.contains("print")) { println(g.render) }
-    case cmd :: rest if cmd == "lps-pal2-peg" || cmd == "lps-pal3-peg" || cmd == "lps-overlap-peg" =>
+    case cmd :: rest if cmd == "lps-pal2-peg" || cmd == "lps-pal3-peg" || cmd == "lps-overlap-peg" || cmd == "lps-gap-peg" =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
       val ms = rest.drop(1).headOption.map(_.toInt).getOrElse(1)
       val fs = rest.drop(2).headOption.map(_.toInt).getOrElse(1)

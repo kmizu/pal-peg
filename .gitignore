@@ -21,3 +21,6 @@ runner/target/
 research/target/
 research/project/target/
 research/project/project/
+
+# python
+__pycache__/

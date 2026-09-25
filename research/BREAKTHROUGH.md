@@ -1,5 +1,8 @@
 # EOF-coded sites and overlapping anchors: results (2026-09-25)
 
+> Superseded for the matcher by `UNDER1000.md` (the gap core, 5,902 rules at 10/13; the budgeted inliner). The
+> controller, the anchors, the code backend and the rate-search lessons below are unchanged.
+
 Executed from the research plan `pal-peg-breakthrough-claude-code-1266231.md` on top of main `1266231`
 (baseline `LpsPal3` 12/36: 25,510 rules). Everything below is a finite check of an experimental machine
 and its printed plain PEG; nothing here is a Lean proof (the proof in `../proof` is untouched and still

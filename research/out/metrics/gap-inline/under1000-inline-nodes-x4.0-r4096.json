@@ -1,0 +1,22 @@
+{
+  "source_file": "out/under1000-gap-a10-b13.peg",
+  "source_commit": "ed7e5a2",
+  "pass": "PegOptimize.compact+PegBudgetInline",
+  "preset": "nodes",
+  "factor": "4.0",
+  "max_rhs_budget": "4096",
+  "eliminated": "4408",
+  "N_before": "5902",
+  "rhs_nodes_before": "208201",
+  "bytes_before": "1180743",
+  "bytes_estimate": "3730545",
+  "seconds": "164.1",
+  "N": 1494,
+  "rhs_nodes": 831817,
+  "max_rhs_nodes": 4078,
+  "rendered_utf8_bytes": 3627605,
+  "distinct_rhs_dag_nodes": 45557,
+  "dispatch_arm_count": 89421,
+  "N_by_component": {"Code": 16, "Pal": 3, "S": 1, "Tail": 11, "aux": 950, "b1": 1, "dj": 3, "first": 1, "m0": 220, "m1": 286, "sm0": 1, "sm1": 1},
+  "rhs_nodes_by_component": {"Code": 111, "Pal": 363, "S": 4078, "Tail": 36, "aux": 245860, "b1": 21, "dj": 82, "first": 45, "m0": 258808, "m1": 322243, "sm0": 85, "sm1": 85}
+}

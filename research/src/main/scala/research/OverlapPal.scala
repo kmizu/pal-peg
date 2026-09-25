@@ -78,7 +78,7 @@ object OverlapPal {
     import M.*
     val queueEmpty: C = all(IsNull(r("pendF")), IsNull(r("pendB")), IsNull(r("pendN")), not(B("rev")))
     val core: BankCore = kind match {
-      case GapCore => new GapKmp.Core(M, GapKmp.bankTags(s), queueEmpty)
+      case GapCore => new GapKmp.Core(M, GapKmp.bankTags(s), GapKmp.Feed(n("src"), n("rc"), n("pendF"), n("pendB"), n("pendN"), n("rev")))
       case Kmp2Core =>
         val k = new Kmp2(M, mTags(s), queueEmpty, keepFull = false)
         new BankCore {
@@ -126,7 +126,7 @@ object OverlapPal {
       }
     }
     def slots(allRegs: Vector[String], allBits: Vector[String]): Map[String, Step] =
-      Map(s"M${s}IN" -> in.build(allRegs, allBits), s"M${s}U" -> core.universal(load).build(allRegs, allBits))
+      Map(s"M${s}IN" -> in.build(allRegs, allBits), s"M${s}U" -> core.universal(if (kind == GapCore) { _ => () } else { load }).build(allRegs, allBits))
     def schedule(k: Int): Vector[String] = Vector(s"M${s}IN") ++ Vector.fill(k)(s"M${s}U")
   }
 
