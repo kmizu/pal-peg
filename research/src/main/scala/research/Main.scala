@@ -457,11 +457,14 @@ object Main {
       //          | peg <kind> <maxLen> <m> <f> <W0> [trie] | check <kind> <m> <f> <W0> <words...> [trie]
       // pal3: LpsWarmup.machine(m, f, W0), fallback below 2 W0; overlap: OverlapPal.machine(a, b, W0), fallback below 3 W0 / 2
       val trie = rest.contains("trie")
-      val args = rest.filter(_ != "trie")
+      // role options: noacc (no young acc), tmp (rv/ks merged), fuse (first old and young steps fused into IN)
+      val roleFlags = Set("noacc", "tmp", "fuse", "compact")
+      val ropts = RolePal.Options(youngReport = !rest.contains("noacc"), mergeTmp = rest.contains("tmp"), fuseIn = rest.contains("fuse"), compact = rest.contains("compact"))
+      val args = rest.filter(x => x != "trie" && !roleFlags(x))
       val isOverlap = kind == "overlap" || kind == "gap" || kind == "role"
       val coreKind: OverlapPal.CoreKind = if (kind == "gap") { OverlapPal.GapCore } else { OverlapPal.Kmp2Core }
       def mk(ms: Int, fs: Int, w0: Int): Lps.Machine =
-        if (kind == "role") { RolePal.machine(ms, fs, w0) } else if (isOverlap) { OverlapPal.machine(ms, fs, w0, coreKind) } else { LpsWarmup.machine(ms, fs, w0) }
+        if (kind == "role") { RolePal.machine(ms, fs, w0, ropts) } else if (isOverlap) { OverlapPal.machine(ms, fs, w0, coreKind) } else { LpsWarmup.machine(ms, fs, w0) }
       def firstAnswer(w0: Int): Int = if (isOverlap) { OverlapPal.firstAnswer(w0) } else { LpsWarmup.firstAnswer(w0) }
       def opts(w0: Int) = LpsCode.Options(fallbackBelow = Some(firstAnswer(w0)), minBirth = w0, dispatch = if (trie) { LpsCode.Trie } else { LpsCode.Direct })
       def colours(ms: Int, fs: Int): Int = LpsCode.compileMeta(mk(ms, fs, 2)).coloring.count
@@ -553,14 +556,19 @@ object Main {
       // the pools plan's rate grid on the old-limit model (OverlapPal gap core; old = 0 means no limit, strict handover check
       // when limited); per configuration pass/fail, the first violating word and the demand summary
       val minAnchor = minAnchorS.toInt
-      val families = Vector("random" -> OverlapProfile.randomWords(randCountS.toInt, randMaxS.toInt), "adversarial" -> OverlapProfile.adversarialWords(advS.toInt),
+      // an optional "seed=<n>" among the configurations: the seed of the random words (default 21)
+      val seed = configs.collectFirst { case x if x.startsWith("seed=") => x.drop(5).toLong }.getOrElse(21L)
+      val families = Vector("random" -> OverlapProfile.randomWords(randCountS.toInt, randMaxS.toInt, seed), "adversarial" -> OverlapProfile.adversarialWords(advS.toInt),
         "switch" -> OverlapProfile.switchWords(switchS.toInt), "structured" -> LpsProfile.structuredWords(structS.toInt))
-      for (cfg <- configs) {
+      for (cfg <- configs if !cfg.startsWith("seed=")) {
         // a/b/old: the old-limit model; r<ky>/<ko>: the role machine
         val t0 = System.nanoTime()
         val r = if (cfg.startsWith("r")) {
-          val Array(ky, ko) = cfg.drop(1).split("/").map(_.toInt)
-          OverlapProfile.grid(cfg, RolePal.machine(ky, ko, minAnchor), minAnchor, true, families, threadsS.toInt, OverlapProfile.Roles)
+          // r<ky>/<ko>[:flag,flag] with the role options noacc, tmp, fuse
+          val (sizes, flags) = cfg.drop(1).split(":", 2) match { case Array(a) => (a, Set.empty[String]); case Array(a, f) => (a, f.split(",").toSet) }
+          val Array(ky, ko) = sizes.split("/").map(_.toInt)
+          val ro = RolePal.Options(youngReport = !flags("noacc"), mergeTmp = flags("tmp"), fuseIn = flags("fuse"), compact = flags("compact"))
+          OverlapProfile.grid(cfg, RolePal.machine(ky, ko, minAnchor, ro), minAnchor, true, families, threadsS.toInt, OverlapProfile.Roles, ro.fuseIn)
         } else {
           val Array(a, b, o) = cfg.split("/").map(_.toInt)
           val limit = if (o <= 0) { Int.MaxValue } else { o }

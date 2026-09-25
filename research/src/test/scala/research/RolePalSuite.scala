@@ -48,4 +48,34 @@ class RolePalSuite extends munit.FunSuite {
       assertEquals(Lps.run(m, w).outputs, OverlapPal.expectedOutputs(16, w), s"'$w'")
     }
   }
+
+  private val lean = RolePal.Options(youngReport = false, fuseIn = true, compact = true)
+
+  test("the size options keep the behaviour: the oracle's outputs and a clean role profile; without `compact` also = the old-limit model tick by tick") {
+    val opts = Vector(RolePal.Options(youngReport = false), RolePal.Options(mergeTmp = true), RolePal.Options(fuseIn = true), RolePal.Options(compact = true), lean)
+    val model = OverlapPal.machine(15, 15, 16, G, 4)
+    val words = OverlapProfile.adversarialWords(100) ++ LpsProfile.structuredWords(130) ++ OverlapProfile.randomWords(40, 129)
+    for (o <- opts) {
+      val role = RolePal.machine(15, 4, 16, o)
+      for (w <- words) {
+        val out = Lps.run(role, w).outputs
+        assertEquals(out, OverlapPal.expectedOutputs(16, w), s"$o '${w.take(40)}' (${w.length})")
+        if (!o.compact) { assertEquals(out, Lps.run(model, w).outputs, s"$o '${w.take(40)}' (${w.length})") }
+        val pr = OverlapProfile.profile(role, w, 16, strict = true, layout = OverlapProfile.Roles, fusedIn = o.fuseIn)
+        assert(pr.violations.isEmpty, s"$o '${w.take(40)}' (${w.length}): ${pr.violations.take(3).mkString("; ")}")
+      }
+    }
+  }
+
+  test("the size options through the code backend at minAnchor 8 (fallback below 12): PEG = interpreter on all words <= 13 (1/1) and <= 12 (2/2); rules <= 7; reachability <= 11") {
+    // merging rv/ks unites the RNODE and KNODE site domains and fusing puts four FIFO sites into one layer: six colours at
+    // 1/1, so these machines need W0 = 8
+    for (o <- Vector(RolePal.Options(youngReport = false, mergeTmp = true), RolePal.Options(compact = true), lean); (ky, ko, maxLen) <- Vector((1, 1, 13), (2, 2, 12))) {
+      val m = RolePal.machine(ky, ko, 8, o)
+      val opts = LpsCode.Options(fallbackBelow = Some(OverlapPal.firstAnswer(8)), minBirth = 8)
+      assertEquals(LpsCode.checkSim(m, maxLen, opts), None, s"$o $ky/$ko")
+      for (w <- Exhaust.words(7, "ab") if w.nonEmpty) { assertEquals(LpsCode.checkRules(m, w, opts), None, s"$o $ky/$ko '$w'") }
+      for (w <- Exhaust.words(11, "ab") if w.nonEmpty) { assertEquals(LpsWarmup.checkReachable(m, w, 8), None, s"$o $ky/$ko '$w'") }
+    }
+  }
 }

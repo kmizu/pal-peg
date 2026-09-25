@@ -1,0 +1,22 @@
+{
+  "source_file": "out/pools-role-y16-o4.peg",
+  "source_commit": "7c0ab81",
+  "pass": "PegOptimize.compact+PegBudgetInline",
+  "preset": "nodes",
+  "factor": "3.0",
+  "max_rhs_budget": "16384",
+  "eliminated": "3643",
+  "N_before": "4987",
+  "rhs_nodes_before": "241021",
+  "bytes_before": "1325770",
+  "bytes_estimate": "3330113",
+  "seconds": "507.6",
+  "N": 1344,
+  "rhs_nodes": 721435,
+  "max_rhs_nodes": 5721,
+  "rendered_utf8_bytes": 3264319,
+  "distinct_rhs_dag_nodes": 50441,
+  "dispatch_arm_count": 83750,
+  "N_by_component": {"Code": 22, "Pal": 8, "S": 1, "Tail": 19, "aux": 854, "dj": 4, "first": 1, "o": 73, "sm0": 1, "sm1": 1, "y": 360},
+  "rhs_nodes_by_component": {"Code": 139, "Pal": 968, "S": 5721, "Tail": 58, "aux": 243137, "dj": 110, "first": 45, "o": 71690, "sm0": 85, "sm1": 85, "y": 399397}
+}
