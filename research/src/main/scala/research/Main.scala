@@ -545,29 +545,58 @@ object Main {
           println(s"${words.size} words, $bad with violations")
         case _ => println("unknown lps-warmup subcommand")
       }
+    case "pool-grid" :: minAnchorS :: advS :: switchS :: structS :: randCountS :: randMaxS :: threadsS :: configs =>
+      // pool-grid <minAnchor> <adversarial maxLen> <switch maxLen> <structured maxLen> <random count> <random maxLen> <threads> a/b/old ...
+      // the pools plan's rate grid on the old-limit model (OverlapPal gap core; old = 0 means no limit, strict handover check
+      // when limited); per configuration pass/fail, the first violating word and the demand summary
+      val minAnchor = minAnchorS.toInt
+      val families = Vector("random" -> OverlapProfile.randomWords(randCountS.toInt, randMaxS.toInt), "adversarial" -> OverlapProfile.adversarialWords(advS.toInt),
+        "switch" -> OverlapProfile.switchWords(switchS.toInt), "structured" -> LpsProfile.structuredWords(structS.toInt))
+      for (cfg <- configs) {
+        val Array(a, b, o) = cfg.split("/").map(_.toInt)
+        val limit = if (o <= 0) { Int.MaxValue } else { o }
+        val t0 = System.nanoTime()
+        val r = OverlapProfile.grid(cfg, OverlapPal.machine(a, b, minAnchor, OverlapPal.GapCore, limit), minAnchor, limit < Int.MaxValue, families, threadsS.toInt)
+        val secs = (System.nanoTime() - t0) / 1e9
+        val verdict = if (r.pass) { s"PASS (${r.words} words)" } else { s"FAIL after ${r.words} words: ${r.firstBad.map { case (w, v) => s"${w.take(60)}${if (w.length > 60) "…" else ""} [len ${w.length - w.indexOf(": ") - 2}] $v" }.getOrElse("")}" }
+        println(f"grid $cfg minAnchor $minAnchor: $verdict ($secs%.0f s)")
+        if (r.pass) { println(s"  ${r.demand.summary}") }
+        r.firstBad.foreach { case (w, _) => java.nio.file.Files.write(java.nio.file.Paths.get(s"/tmp/pool-grid-bad-${cfg.replace('/', '-')}.txt"), (w.drop(w.indexOf(": ") + 2) + "\n").getBytes("UTF-8")) }
+      }
     case "overlap-profile" :: rest0 =>
       // overlap-profile <a> <b> <word> [minAnchor] [gap] | overlap-profile <a> <b> structured|switch|adversarial <maxLen> [minAnchor] [gap]
-      val rest = rest0.filterNot(_ == "gap")
+      // an optional "old=<k>": the answering bank runs only its first k copies per tick (the pools plan's small old pool)
+      val oldLimit = rest0.collectFirst { case x if x.startsWith("old=") => x.drop(4).toInt }.getOrElse(Int.MaxValue)
+      // an optional "dump=<path>": the violating words, one per line
+      val dump = rest0.collectFirst { case x if x.startsWith("dump=") => x.drop(5) }
+      val rest = rest0.filterNot(x => x == "gap" || x.startsWith("old=") || x.startsWith("dump="))
+      val dumped = Vector.newBuilder[String]
       val coreKind: OverlapPal.CoreKind = if (rest0.contains("gap")) { OverlapPal.GapCore } else { OverlapPal.Kmp2Core }
       val (a, b) = (rest(0).toInt, rest(1).toInt)
       val (words, minAnchor) = rest(2) match {
         case "structured" => (LpsProfile.structuredWords(rest(3).toInt), rest.lift(4).map(_.toInt).getOrElse(2))
         case "switch" => (OverlapProfile.switchWords(rest(3).toInt), rest.lift(4).map(_.toInt).getOrElse(2))
         case "adversarial" => (OverlapProfile.adversarialWords(rest(3).toInt), rest.lift(4).map(_.toInt).getOrElse(2))
+        case "random" => (OverlapProfile.randomWords(rest(3).toInt, rest(4).toInt), rest.lift(5).map(_.toInt).getOrElse(2))
         case w => (Vector(w), rest.lift(3).map(_.toInt).getOrElse(2))
       }
-      val m = OverlapPal.machine(a, b, minAnchor, coreKind)
+      val m = OverlapPal.machine(a, b, minAnchor, coreKind, oldLimit)
       var bad = 0
       var maxUnits = 0
       var maxBacklog = 0
+      var demand = OverlapProfile.Demand()
       for (w <- words) {
-        val pr = OverlapProfile.profile(m, w, minAnchor)
+        val pr = OverlapProfile.profile(m, w, minAnchor, oldLimit < Int.MaxValue)
+        demand = demand.merge(pr.demand)
         maxUnits = math.max(maxUnits, pr.maxUnitsPerTick)
         maxBacklog = math.max(maxBacklog, pr.lives.map(_.maxBacklog).maxOption.getOrElse(0))
         if (words.size == 1) { println(pr.table) }
+        if (pr.violations.nonEmpty) { dumped += w }
         if (pr.violations.nonEmpty) { bad += 1; if (bad <= 5) { println(s"'${w.take(40)}${if (w.length > 40) "..." else ""}' (${w.length}): " + pr.violations.take(3).mkString("; ")) } }
       }
-      println(s"overlap${if (coreKind == OverlapPal.GapCore) "+gap" else ""} $a/$b minAnchor $minAnchor: ${words.size} words, $bad with violations, max units in a tick $maxUnits, max backlog $maxBacklog")
+      println(s"overlap${if (coreKind == OverlapPal.GapCore) "+gap" else ""}${if (oldLimit < Int.MaxValue) s" old<=$oldLimit" else ""} $a/$b minAnchor $minAnchor: ${words.size} words, $bad with violations, max units in a tick $maxUnits, max backlog $maxBacklog")
+      println(demand.summary)
+      dump.foreach(p => java.nio.file.Files.write(java.nio.file.Paths.get(p), dumped.result().mkString("", "\n", "\n").getBytes("UTF-8")))
     case "lps-kmp2" :: rest =>
       val maxLen = rest.headOption.map(_.toInt).getOrElse(6)
       val n = rest.drop(1).headOption.map(_.toInt).getOrElse(6)

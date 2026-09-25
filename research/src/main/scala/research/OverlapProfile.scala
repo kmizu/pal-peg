@@ -16,14 +16,33 @@ object OverlapProfile {
                             units: mutable.Map[String, Int] = mutable.LinkedHashMap.empty, var maxBacklog: Int = 0) {
     def row: String = f"| $bank | $h | $buildEnd | $revEnd | $replayDone | $retire | $maxBacklog | " + units.map { case (k, v) => s"$k=$v" }.mkString(" ") + " |"
   }
-  final case class Profile(lives: Vector[BankLife], violations: Vector[String], maxUnitsPerTick: Int) {
+  /** Step demand (under-1000 pools plan, Task 0): per tick and bank, the index of the last universal-step copy that
+    * changed any of the bank's registers or bits (copies are deterministic: after the first no-op every later copy
+    * is a no-op too). A bank is *young* at tick t while t < start(h) of its current life, *old* from start(h) on;
+    * `firstAnswer` is the demand at t = start(h) (the first answering tick, counted as old). */
+  /** `oldBacklogMax`: the largest FIFO length of an old bank at the end of a tick; `oldBehindMax`: the longest run of
+    * consecutive old ticks that end with the bank behind (letters queued or a pop in progress) */
+  final case class Demand(youngMax: Vector[Int] = Vector(0, 0), oldMax: Int = 0, firstAnswerMax: Int = 0,
+                          oldHist: Map[Int, Int] = Map(), youngHist: Map[Int, Int] = Map(), oldBacklogMax: Int = 0, oldBehindMax: Int = 0) {
+    def merge(o: Demand): Demand = {
+      def mh(a: Map[Int, Int], b: Map[Int, Int]): Map[Int, Int] = (a.keySet ++ b.keySet).map(k => k -> (a.getOrElse(k, 0) + b.getOrElse(k, 0))).toMap
+      Demand(youngMax.zip(o.youngMax).map { case (x, y) => math.max(x, y) }, math.max(oldMax, o.oldMax), math.max(firstAnswerMax, o.firstAnswerMax),
+        mh(oldHist, o.oldHist), mh(youngHist, o.youngHist), math.max(oldBacklogMax, o.oldBacklogMax), math.max(oldBehindMax, o.oldBehindMax))
+    }
+    def hist(h: Map[Int, Int]): String = h.toVector.sortBy(_._1).map { case (k, c) => s"$k:$c" }.mkString(" ")
+    def summary: String = s"demand: young A ${youngMax(0)}, young B ${youngMax(1)}, old $oldMax (first answering tick $firstAnswerMax); " +
+      s"old histogram [${hist(oldHist)}]; young histogram [${hist(youngHist)}]; old backlog max $oldBacklogMax, old behind max $oldBehindMax ticks"
+  }
+  final case class Profile(lives: Vector[BankLife], violations: Vector[String], maxUnitsPerTick: Int, demand: Demand = Demand()) {
     def table: String = "| bank | h | build end | rev end | replay done | retire | max backlog | units |\n|---|---|---|---|---|---|---|---|\n" + lives.map(_.row).mkString("\n")
   }
   private val phaseNames = Map(0 -> "build", 1 -> "back", 2 -> "rev", 3 -> "match", 4 -> "mback", 5 -> "idle")
   private def phaseOf(st: Lpm.State, px: String): Int = (0 until 3).map(i => if (st.bits(s"${px}p$i")) { 1 << i } else { 0 }).sum
   private def letters(c: Lpm.RCell, m: Lps.Machine): String = { val b = new StringBuilder; var x = c; while (x != null) { b.append(m.alphabet.charAt(x.p1.tag)); x = x.p2 }; b.toString }
 
-  def profile(m: Lps.Machine, w: String, minAnchor: Int): Profile = {
+  /** `strict`: a bank must have left BUILD/REV (phase MATCH or MPOP, pattern source and replay countdown exhausted) by the
+    * end of its last young tick — the condition under which a match-only old core can take it over (pools plan) */
+  def profile(m: Lps.Machine, w: String, minAnchor: Int, strict: Boolean = false): Profile = {
     val rd = w.reverse
     val n = w.length
     val as = OverlapPal.anchors(minAnchor, 3 * n + 3)
@@ -37,8 +56,52 @@ object OverlapProfile {
     var maxUnits = 0
     var tick = 0
     def v(msg: String): Unit = if (violations.size < 20) { violations += msg }
+    // step demand (Task 0 of the pools plan)
+    val bankRegs = (0 to 1).map(s => m.regs.map(_._1).filter(_.startsWith(s"m${s}_")))
+    val bankBits = (0 to 1).map(s => m.bits.filter(_.startsWith(s"m${s}_")))
+    def changed(a: Lpm.State, b: Lpm.State, s: Int): Boolean =
+      bankRegs(s).exists(r => !(a.regs.getOrElse(r, null) eq b.regs.getOrElse(r, null))) || bankBits(s).exists(x => a.bits(x) != b.bits(x))
+    val copyIdx = Array(0, 0)
+    val demandNow = Array(0, 0)
+    val youngMax = Array(0, 0)
+    var oldMax = 0
+    var firstMax = 0
+    val oldHist = mutable.HashMap.empty[Int, Int]
+    val youngHist = mutable.HashMap.empty[Int, Int]
+    var oldBacklogMax = 0
+    var oldBehindMax = 0
+    val behindRun = Array(0, 0)
     Lps.traceSlots(m, w) { (t, slot, st) =>
       if (t != tick) { maxUnits = math.max(maxUnits, unitsThisTick); unitsThisTick = 0; tick = t }
+      if (slot == "CT") {
+        copyIdx(0) = 0; copyIdx(1) = 0; demandNow(0) = 0; demandNow(1) = 0
+        for (s <- 0 to 1 if st.bits(s"b$s")) { behindRun(s) = 0 }   // a new life of family s
+      }
+      for (s <- 0 to 1 if slot.startsWith(s"M${s}U") && prev != null) {
+        copyIdx(s) += 1
+        if (changed(prev, st, s)) { demandNow(s) = copyIdx(s) }
+      }
+      if (slot == "OUT") {
+        for (s <- 0 to 1; life <- cur(s)) {
+          val d = demandNow(s)
+          val st0 = start(life.h)
+          if (strict && t + 1 == st0) {
+            val ph = phaseOf(st, s"m${s}_")
+            if ((ph != 3 && ph != 4) || st.regs.getOrElse(s"m${s}_src", null) != null || st.regs.getOrElse(s"m${s}_rc", null) != null) {
+              v(s"tick $t: bank $s is still building (phase $ph) at the end of its young window (h = ${life.h})")
+            }
+          }
+          if (t < st0) { youngMax(s) = math.max(youngMax(s), d); youngHist(d) = youngHist.getOrElse(d, 0) + 1 }
+          else {
+            oldMax = math.max(oldMax, d); oldHist(d) = oldHist.getOrElse(d, 0) + 1; if (t == st0) { firstMax = math.max(firstMax, d) }
+            val q = queueLen(st, s)
+            val behind = q > 0 || phaseOf(st, s"m${s}_") == 4 || st.regs.getOrElse(s"m${s}_rv", null) != null
+            oldBacklogMax = math.max(oldBacklogMax, q)
+            behindRun(s) = if (behind) { behindRun(s) + 1 } else { 0 }
+            oldBehindMax = math.max(oldBehindMax, behindRun(s))
+          }
+        }
+      }
       if (slot == "CT") {
         for (s <- 0 to 1 if st.bits(s"b$s")) {
           if (!as.contains(t)) { v(s"tick $t: bank $s born at a non-anchor") }
@@ -59,7 +122,7 @@ object OverlapProfile {
           if (rc == null || rc.tick != want) { v(s"tick $t: bank $s replay countdown depth ${if (rc == null) "null" else rc.tick.toString}, expected $want") }
         }
       }
-      for (s <- 0 to 1 if slot == s"M${s}U" && prev != null) {
+      for (s <- 0 to 1 if slot.startsWith(s"M${s}U") && prev != null) {
         val ph = phaseOf(st, s"m${s}_")
         val was = phaseOf(prev, s"m${s}_")
         if (was != OverlapPal.IDLE) { unitsThisTick += 1 }
@@ -111,7 +174,22 @@ object OverlapProfile {
       prev = st
     }
     maxUnits = math.max(maxUnits, unitsThisTick)
-    Profile(lives.toVector, violations.toVector, maxUnits)
+    Profile(lives.toVector, violations.toVector, maxUnits, Demand(youngMax.toVector, oldMax, firstMax, oldHist.toMap, youngHist.toMap, oldBacklogMax, oldBehindMax))
+  }
+
+  /** random palindromes, near-palindromes (one letter appended to a palindrome of the other parity) and random words,
+    * lengths up to `maxLen` */
+  def randomWords(count: Int, maxLen: Int, seed: Long = 21L): Vector[String] = {
+    val rnd = new scala.util.Random(seed)
+    Vector.fill(count) {
+      val half = Vector.fill(1 + rnd.nextInt(math.max(1, maxLen / 2)))(if (rnd.nextBoolean()) 'a' else 'b').mkString
+      rnd.nextInt(4) match {
+        case 0 => half + half.reverse
+        case 1 => half + (if (rnd.nextBoolean()) "a" else "b") + half.reverse
+        case 2 => half + half.reverse.drop(1) + (if (rnd.nextBoolean()) "a" else "b")
+        case _ => Vector.fill(2 * half.length)(if (rnd.nextBoolean()) 'a' else 'b').mkString
+      }
+    }.map(_.take(maxLen))
   }
 
   private def queue(st: Lpm.State, s: Int, m: Lps.Machine): String = {
@@ -170,5 +248,33 @@ object OverlapProfile {
       w *= 2
     }
     ws.result().distinct.map(_.reverse)   // the machine reads from the end: the read order is rd = w.reverse
+  }
+
+  /** One configuration of the rate grid: bank A `a` and bank B `b` copies per tick, the old bank limited to `old`. */
+  final case class GridResult(label: String, pass: Boolean, words: Int, firstBad: Option[(String, String)], demand: Demand)
+
+  /** Profile `families` (name -> words, in order) on `m` in parallel over `threads` threads; stop scheduling at the first
+    * violating word. The machines, interpreter and profiler keep all mutable state per call, so words are independent. */
+  def grid(label: String, m: Lps.Machine, minAnchor: Int, strict: Boolean, families: Vector[(String, Vector[String])], threads: Int): GridResult = {
+    import java.util.concurrent.{Executors, TimeUnit}
+    import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger, AtomicReference}
+    val pool = Executors.newFixedThreadPool(threads)
+    val failed = new AtomicBoolean(false)
+    val first = new AtomicReference[Option[(String, String)]](None)
+    val count = new AtomicInteger(0)
+    val demand = new AtomicReference[Demand](Demand())
+    for ((fam, ws) <- families; w <- ws) {
+      pool.submit(new Runnable {
+        def run(): Unit = if (!failed.get()) {
+          val pr = profile(m, w, minAnchor, strict)
+          count.incrementAndGet()
+          demand.updateAndGet(d => d.merge(pr.demand))
+          if (pr.violations.nonEmpty && failed.compareAndSet(false, true)) { first.set(Some((s"$fam: $w", pr.violations.take(2).mkString("; ")))) }
+        }
+      })
+    }
+    pool.shutdown()
+    pool.awaitTermination(7, TimeUnit.DAYS)
+    GridResult(label, !failed.get(), count.get(), first.get(), demand.get())
   }
 }
