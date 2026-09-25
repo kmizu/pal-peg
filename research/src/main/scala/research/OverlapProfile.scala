@@ -33,7 +33,23 @@ object OverlapProfile {
     def summary: String = s"demand: young A ${youngMax(0)}, young B ${youngMax(1)}, old $oldMax (first answering tick $firstAnswerMax); " +
       s"old histogram [${hist(oldHist)}]; young histogram [${hist(youngHist)}]; old backlog max $oldBacklogMax, old behind max $oldBehindMax ticks"
   }
-  final case class Profile(lives: Vector[BankLife], violations: Vector[String], maxUnitsPerTick: Int, demand: Demand = Demand()) {
+  /** Step kinds (STRATEGY.md, experiment E0): every universal step of a young or old bank, classified by its state change —
+    * `build letter` (the pattern source advanced), `build pop`, `match fast` (a FIFO letter consumed, no pop started),
+    * `match slow` (a FIFO letter consumed, a pop started), `match pop`, `fifo reversal` (the back stack moved to the front),
+    * `idle` (no change), `other` (the end of a build, a phase change without a letter). `fastPairs` counts, within a tick,
+    * the disjoint pairs of consecutive fast matches: the steps a two-letter fast match would save. */
+  final case class StepKinds(young: Map[String, Long] = Map(), old: Map[String, Long] = Map(), youngFastPairs: Long = 0, oldFastPairs: Long = 0) {
+    private def mm(a: Map[String, Long], b: Map[String, Long]) = (a.keySet ++ b.keySet).map(k => k -> (a.getOrElse(k, 0L) + b.getOrElse(k, 0L))).toMap
+    def merge(o: StepKinds): StepKinds = StepKinds(mm(young, o.young), mm(old, o.old), youngFastPairs + o.youngFastPairs, oldFastPairs + o.oldFastPairs)
+    private def row(m: Map[String, Long], pairs: Long): String = {
+      val busy = m.filter(_._1 != "idle").values.sum
+      val kinds = Vector("build letter", "build pop", "match fast", "match slow", "match pop", "fifo reversal", "other")
+      kinds.map(k => f"$k ${m.getOrElse(k, 0L)} (${100.0 * m.getOrElse(k, 0L) / math.max(busy, 1)}%.1f%%)").mkString(", ") +
+        f"; busy $busy, idle ${m.getOrElse("idle", 0L)}; fast pairs $pairs (${100.0 * pairs / math.max(busy, 1)}%.1f%% of the busy steps)"
+    }
+    def summary: String = s"young steps: ${row(young, youngFastPairs)}\nold steps: ${row(old, oldFastPairs)}"
+  }
+  final case class Profile(lives: Vector[BankLife], violations: Vector[String], maxUnitsPerTick: Int, demand: Demand = Demand(), kinds: StepKinds = StepKinds()) {
     def table: String = "| bank | h | build end | rev end | replay done | retire | max backlog | units |\n|---|---|---|---|---|---|---|---|\n" + lives.map(_.row).mkString("\n")
   }
   private val phaseNames = Map(0 -> "build", 1 -> "back", 2 -> "rev", 3 -> "match", 4 -> "mback", 5 -> "idle")
@@ -100,6 +116,11 @@ object OverlapProfile {
     var oldBacklogMax = 0
     var oldBehindMax = 0
     val behindRun = Array(0, 0)
+    val kindCount = Array(mutable.HashMap.empty[String, Long], mutable.HashMap.empty[String, Long])   // 0 young, 1 old
+    val fastPairs = Array(0L, 0L)
+    val fastRun = Array(0, 0)   // per family: consecutive fast matches in this tick
+    val runRole = Array(0, 0)
+    def closeRun(s: Int): Unit = { fastPairs(runRole(s)) += fastRun(s) / 2; fastRun(s) = 0 }
     Lps.traceSlots(m, w) { (t, slot, st) =>
       if (t != tick) { maxUnits = math.max(maxUnits, unitsThisTick); unitsThisTick = 0; tick = t }
       if (slot == "CT") {
@@ -113,9 +134,26 @@ object OverlapProfile {
         }
         if (as.contains(t) && as.indexOf(t) + 1 < as.size && !st.bits("b0") && !st.bits("b1") && t >= minAnchor) { v(s"tick $t: anchor without a birth") }
       }
+      if (slot == "CT") { closeRun(0); closeRun(1) }   // runs do not cross a tick
       for (s <- 0 to 1 if isU(s, t, slot) && prev != null) {
         copyIdx(s) += 1
-        if (changed(prev, st, px(s, t))) { demandNow(s) = copyIdx(s) }
+        val p = px(s, t)
+        if (changed(prev, st, p)) { demandNow(s) = copyIdx(s) }
+        cur(s).foreach { life =>
+          val role = if (t < start(life.h)) { 0 } else { 1 }
+          val was = phaseOf(prev, p, m)
+          val now = phaseOf(st, p, m)
+          def moved(r: String): Boolean = !(prev.regs.getOrElse(s"$p$r", null) eq st.regs.getOrElse(s"$p$r", null))
+          val kind = if (!changed(prev, st, p)) { "idle" }
+            else if ((was == 0 || was == 1) && moved("src")) { "build letter" }
+            else if (was == 1) { "build pop" }
+            else if (was == 3 && moved("pendB")) { "fifo reversal" }
+            else if (was == 3 && moved("pendF")) { if (now == 3) { "match fast" } else { "match slow" } }
+            else if (was == 4) { "match pop" }
+            else { "other" }
+          kindCount(role)(kind) = kindCount(role).getOrElse(kind, 0L) + 1
+          if (kind == "match fast") { if (fastRun(s) > 0 && runRole(s) != role) { closeRun(s) }; runRole(s) = role; fastRun(s) += 1 } else { closeRun(s) }
+        }
       }
       for (s <- 0 to 1 if isIn(s, slot) && st.bits(s"b$s")) {
         val rc = st.regs.getOrElse(s"${px(s, t)}rc", null)
@@ -203,7 +241,9 @@ object OverlapProfile {
       prev = st
     }
     maxUnits = math.max(maxUnits, unitsThisTick)
-    Profile(lives.toVector, violations.toVector, maxUnits, Demand(youngMax.toVector, oldMax, firstMax, oldHist.toMap, youngHist.toMap, oldBacklogMax, oldBehindMax))
+    closeRun(0); closeRun(1)
+    Profile(lives.toVector, violations.toVector, maxUnits, Demand(youngMax.toVector, oldMax, firstMax, oldHist.toMap, youngHist.toMap, oldBacklogMax, oldBehindMax),
+      StepKinds(kindCount(0).toMap, kindCount(1).toMap, fastPairs(0), fastPairs(1)))
   }
 
   /** random palindromes, near-palindromes (one letter appended to a palindrome of the other parity) and random words,

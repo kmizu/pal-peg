@@ -119,4 +119,15 @@ class SiteCodeSuite extends munit.FunSuite {
     assertEquals(SiteCode.nextPow2(36), 64)
     assertEquals(SiteCode.nextPow2(2), 2)
   }
+
+  test("codeByStar: Code_i by a progressing star has the same extent as the recursive Code_i at every position (all words <= 9, count 6)") {
+    val rec = new Grammar(("S", Eps) +: SiteCode.helpers(6))
+    val star = new Grammar(("S", Eps) +: SiteCode.helpers(6, codeByStar = true))
+    for (w <- Exhaust.words(9, "ab"); i <- 0 until 6; p <- 0 to w.length) {
+      assertEquals(star.extent(w, SiteCode.code(i), p), rec.extent(w, SiteCode.code(i), p), s"'$w' Code_$i at $p")
+    }
+    for ((n, e) <- star.rules if n.startsWith("Code_")) {
+      assert(!Expr.render(e).contains(n + " ") && !Expr.render(e).endsWith(n), s"$n must not refer to itself")
+    }
+  }
 }

@@ -1,5 +1,9 @@
 # Generated grammars
 
+- `pools-role-y15-o4-star-n999.peg.gz` — **the smallest 999-rule grammar (2026-09-26, `STRATEGY.md` E1)**: the same machine as
+  below with non-recursive code helpers (`lps-code … star`), inlined at ×8.28: 999 rules, 1,652,383 rhs nodes, max rhs
+  12,773, 6,754,563 bytes. Re-parsed = oracle on all words ≤ 9; Rust runner on the 140 raw words: 0 mismatches.
+  `metrics/pools-role-y15-o4-star-n999.json`, curve `metrics/pools-inline-curve-y15-o4-star.md`.
 - `pools-role-y15-o4-n999.peg.gz` — **the current best (2026-09-25, `POOLS.md`): 999 rules.** The role machine (`RolePal`,
   young pool 15, old pool 4, options noacc fuse compact endent endonce, W0 = 32, first machine answer 48) compiled by the
   site-code backend and inlined by `PegBudgetInline` to the first grammar of the greedy run with fewer than 1,000 rules
