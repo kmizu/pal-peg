@@ -458,8 +458,9 @@ object Main {
       // pal3: LpsWarmup.machine(m, f, W0), fallback below 2 W0; overlap: OverlapPal.machine(a, b, W0), fallback below 3 W0 / 2
       val trie = rest.contains("trie")
       // role options: noacc (no young acc), tmp (rv/ks merged), fuse (first old and young steps fused into IN)
-      val roleFlags = Set("noacc", "tmp", "fuse", "compact")
-      val ropts = RolePal.Options(youngReport = !rest.contains("noacc"), mergeTmp = rest.contains("tmp"), fuseIn = rest.contains("fuse"), compact = rest.contains("compact"))
+      val roleFlags = Set("noacc", "tmp", "fuse", "compact", "rk", "endent", "endonce", "p3")
+      val ropts = RolePal.Options(youngReport = !rest.contains("noacc"), mergeTmp = rest.contains("tmp"), fuseIn = rest.contains("fuse"), compact = rest.contains("compact"),
+        sharedRK = rest.contains("rk"), endAsEntry = rest.contains("endent"), endOnce = rest.contains("endonce"), rearInP3 = rest.contains("p3"))
       val args = rest.filter(x => x != "trie" && !roleFlags(x))
       val isOverlap = kind == "overlap" || kind == "gap" || kind == "role"
       val coreKind: OverlapPal.CoreKind = if (kind == "gap") { OverlapPal.GapCore } else { OverlapPal.Kmp2Core }
@@ -468,7 +469,12 @@ object Main {
       def firstAnswer(w0: Int): Int = if (isOverlap) { OverlapPal.firstAnswer(w0) } else { LpsWarmup.firstAnswer(w0) }
       def opts(w0: Int) = LpsCode.Options(fallbackBelow = Some(firstAnswer(w0)), minBirth = w0, dispatch = if (trie) { LpsCode.Trie } else { LpsCode.Direct })
       def colours(ms: Int, fs: Int): Int = LpsCode.compileMeta(mk(ms, fs, 2)).coloring.count
-      def w0Of(ms: Int, fs: Int, spec: String): Int = if (spec == "auto") { SiteCode.nextPow2(math.max(colours(ms, fs), 2)) } else { spec.toInt }
+      // W0: "auto" = the power of two >= colours; "auto3" = the smallest 3 * 2^k (k >= 2) >= colours (a base-3 clock, RolePal)
+      def w0Of(ms: Int, fs: Int, spec: String): Int = spec match {
+        case "auto" => SiteCode.nextPow2(math.max(colours(ms, fs), 2))
+        case "auto3" => { val c = colours(ms, fs); Iterator.iterate(12)(_ * 2).find(_ >= c).get }
+        case x => x.toInt
+      }
       sub match {
         case "sizes" =>
           val c = colours(args(0).toInt, args(1).toInt)
@@ -567,7 +573,8 @@ object Main {
           // r<ky>/<ko>[:flag,flag] with the role options noacc, tmp, fuse
           val (sizes, flags) = cfg.drop(1).split(":", 2) match { case Array(a) => (a, Set.empty[String]); case Array(a, f) => (a, f.split(",").toSet) }
           val Array(ky, ko) = sizes.split("/").map(_.toInt)
-          val ro = RolePal.Options(youngReport = !flags("noacc"), mergeTmp = flags("tmp"), fuseIn = flags("fuse"), compact = flags("compact"))
+          val ro = RolePal.Options(youngReport = !flags("noacc"), mergeTmp = flags("tmp"), fuseIn = flags("fuse"), compact = flags("compact"),
+            sharedRK = flags("rk"), endAsEntry = flags("endent"), endOnce = flags("endonce"), rearInP3 = flags("p3"))
           OverlapProfile.grid(cfg, RolePal.machine(ky, ko, minAnchor, ro), minAnchor, true, families, threadsS.toInt, OverlapProfile.Roles, ro.fuseIn)
         } else {
           val Array(a, b, o) = cfg.split("/").map(_.toInt)

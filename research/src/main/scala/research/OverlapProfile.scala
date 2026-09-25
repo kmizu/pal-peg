@@ -81,7 +81,7 @@ object OverlapProfile {
     }
     def isU(s: Int, t: Int, slot: String): Boolean = layout match {
       case Banks => slot.startsWith(s"M${s}U")
-      case Roles => cur(s).isDefined && slot == (if (px(s, t) == "y_") { "YU" } else { "OU" })
+      case Roles => cur(s).isDefined && slot.startsWith(if (px(s, t) == "y_") { "YU" } else { "OU" })
     }
     def isIn(s: Int, slot: String): Boolean = layout match { case Banks => slot == s"M${s}IN"; case Roles => slot == "IN" }
     // step demand (Task 0 of the pools plan)

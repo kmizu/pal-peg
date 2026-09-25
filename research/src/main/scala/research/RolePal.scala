@@ -24,12 +24,16 @@ object RolePal {
   import LpsPal.Mod
 
   val T: GapKmp.Tags = GapKmp.bankTags(0)
+  def tagsOf(o: Options): GapKmp.Tags = if (o.rearInP3) { GapKmp.roleTagsP3 } else { T }
   private def not(c: C): C = Not(c)
   /** a bank is born this tick (CT's b0 or b1): the handover tick */
   val birth: C = Or(Bit("b0"), Bit("b1"))
   /** size options (POOLS.md §4): `youngReport = false` drops the young role's `acc` (never read: the old role's push
     * clears it on the handover tick); `mergeTmp` merges `rv`/`ks`; `fuseIn` composes the first old and young steps into IN */
-  final case class Options(youngReport: Boolean = true, mergeTmp: Boolean = false, fuseIn: Boolean = false, compact: Boolean = false)
+  final case class Options(youngReport: Boolean = true, mergeTmp: Boolean = false, fuseIn: Boolean = false, compact: Boolean = false,
+                           sharedRK: Boolean = false, endAsEntry: Boolean = false, endOnce: Boolean = false, rearInP3: Boolean = false) {
+    require(!endOnce || compact, "endOnce needs the compact states")
+  }
   /** the registers and bits the handover copies from the young role to the old one */
   def copiedRegs(o: Options = Options()): Vector[String] =
     Vector("cur", "L", "K", "R") ++ (if (o.mergeTmp) { Vector("tmp") } else { Vector("rv", "ks") }) ++ Vector("end", "pendF", "pendB", "pendN")
@@ -42,11 +46,16 @@ object RolePal {
     import M.{r, B}
     def n(x: String): String = px + x
     val report: Boolean = !young || opts.youngReport
-    val core = new GapKmp.Core(M, T, GapKmp.Feed(n("src"), n("rc"), n("pendF"), n("pendB"), n("pendN"), n("rev")), matchOnly = !young,
-      report = report, mergeTmp = opts.mergeTmp, compact = opts.compact)
+    val tags: GapKmp.Tags = tagsOf(opts)
+    private def mk(endStep: Boolean) = new GapKmp.Core(M, tags, GapKmp.Feed(n("src"), n("rc"), n("pendF"), n("pendB"), n("pendN"), n("rev")),
+      matchOnly = !young, report = report, mergeTmp = opts.mergeTmp, compact = opts.compact, sharedRK = opts.sharedRK,
+      endAsEntry = opts.endAsEntry, endStep = endStep)
+    val core = mk(endStep = true)
+    /** `endOnce`: the steps after the first young step of a tick leave the end of the build to the next tick's first step */
+    val coreRest = if (young && opts.endOnce) { mk(endStep = false) } else { core }
     val regs: Vector[(String, Set[K])] = core.regs ++
       (if (young) { Vector(n("src") -> Set[K](KInp), n("rc") -> Set[K](KInp)) } else { Vector() }) ++
-      Vector("pendF", "pendB", "pendN").map(q => n(q) -> Set[K](KTag(T.IQC)))
+      Vector("pendF", "pendB", "pendN").map(q => n(q) -> Set[K](KTag(tags.IQC)))
     val bits: Vector[String] = core.bits ++ M.ctlBits ++ Vector(n("rev"))
     val queueEmpty: C = all(IsNull(r("pendF")), IsNull(r("pendB")), IsNull(r("pendN")), not(B("rev")))
     val notIdle: C = core.born
@@ -56,7 +65,7 @@ object RolePal {
       val gF = all(g0, queueEmpty, core.matchSide)
       val gB = all(g0, not(gF), notIdle, not(B("rev")))
       val gN = all(g0, not(gF), not(gB), notIdle)
-      val q = p.site(Const(T.IQC), In, Ite(gB, r("pendB"), Ite(gN, r("pendN"), Null)), Null, Null)
+      val q = p.site(Const(tags.IQC), In, Ite(gB, r("pendB"), Ite(gN, r("pendN"), Null)), Null, Null)
       p.when(gF) { u => u.set(n("pendF"), q); if (report) { u.bit(n("acc"), False) } }
       p.when(gB) { u => u.set(n("pendB"), q); if (report) { u.bit(n("acc"), False) } }
       p.when(gN) { u => u.set(n("pendN"), q); if (report) { u.bit(n("acc"), False) } }
@@ -90,7 +99,8 @@ object RolePal {
   def oldIn(o: Role): Prog = { val p = o.M.prog(); o.pushes(p, True); p }
 
   def machine(ky: Int, ko: Int, minAnchor: Int = 2, opts: Options = Options()): Lps.Machine = {
-    require(ky >= 1 && ko >= 1 && minAnchor >= 2 && (minAnchor & (minAnchor - 1)) == 0, "pools >= 1, minAnchor a power of two >= 2")
+    require(ky >= 1 && ko >= 1 && minAnchor >= 2 && ((minAnchor & (minAnchor - 1)) == 0 || OverlapPal.base3(minAnchor)),
+      "pools >= 1, minAnchor a power of two >= 2 or 3 * 2^k (k >= 2)")
     val y = new Role("y_", young = true, opts)
     val o = new Role("o_", young = false, opts)
     val regs = OverlapPal.ctlRegs ++ y.regs ++ o.regs
@@ -99,14 +109,18 @@ object RolePal {
     // IN = handover, then the young reset/push, then the old push (sequential: each reads the previous one's updates)
     val in = Lpm.fuse(Lpm.fuse(handover(y, o, opts).build(names, bits), youngIn(y).build(names, bits)), oldIn(o).build(names, bits))
     val yu = y.core.universal(_ => ()).build(names, bits)
+    val yuRest = y.coreRest.universal(_ => ()).build(names, bits)
     val ou = o.core.universal(_ => ()).build(names, bits)
     // fuseIn: IN, then the first old step, then the first young step, in one layer (the two roles are disjoint, so the
     // order of an old and a young step does not matter)
     val in1 = if (opts.fuseIn) { Lpm.fuse(Lpm.fuse(in, ou), yu) } else { in }
-    val slots = Map("CT" -> OverlapPal.ct(minAnchor).build(names, bits), "IN" -> in1, "YU" -> yu, "OU" -> ou,
+    // with endOnce the first young step of a tick (fused into IN, or the slot YUF) is the only one that ends a build
+    val slots = Map("CT" -> OverlapPal.ct(minAnchor).build(names, bits), "IN" -> in1, "YUF" -> yu, "YU" -> yuRest, "OU" -> ou,
       "OUT" -> OverlapPal.outOf(Bit("o_acc")).build(names, bits))
-    val (ny, no) = if (opts.fuseIn) { (ky - 1, ko - 1) } else { (ky, ko) }
-    val schedule = Vector("CT", "IN") ++ Vector.fill(ny)("YU") ++ Vector.fill(no)("OU") ++ Vector("OUT")
-    Lps.Machine("ab", regs, bits, if (opts.compact) { Set("out") } else { Set("out", "y_p0", "y_p2", "o_p0", "o_p2") }, "out", T.schema, schedule, slots)
+    val youngSlots = if (opts.fuseIn) { Vector.fill(ky - 1)("YU") } else if (opts.endOnce) { Vector("YUF") ++ Vector.fill(ky - 1)("YU") } else { Vector.fill(ky)("YU") }
+    val no = if (opts.fuseIn) { ko - 1 } else { ko }
+    val schedule = Vector("CT", "IN") ++ youngSlots ++ Vector.fill(no)("OU") ++ Vector("OUT")
+    Lps.Machine("ab", regs, bits, if (opts.compact) { Set("out") } else { Set("out", "y_p0", "y_p2", "o_p0", "o_p2") }, "out", tagsOf(opts).schema,
+      schedule, slots.filter { case (k, _) => schedule.contains(k) })
   }
 }

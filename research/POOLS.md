@@ -121,6 +121,34 @@ Why inst §1's estimate (≈ 1,070 after inlining for 13/3) missed: the pools ne
 FIFO (2 IN sites + every young and old layer) gives 22 colours, so W₀ = 32 (+24 fallback, +12 helpers) — risk 1 of the
 execution plan.
 
+### 4.2 The per-layer diet at 15/4 (Tasks 2 and 4, measured one by one)
+
+The core floor below is the sum of the per-layer cores (registers, bits, site fields) of the census plus fallback and
+helpers; the inliner cannot go below it (the K and X rules are what it removes).
+
+| 15/4 with | N compact | colours / W₀ | layer 0 | IN | young layer | old layer | floor |
+|---|---:|---|---:|---:|---:|---:|---:|
+| (nothing) | 4,738 | 21 / 32 | | | | | |
+| `noacc` (the young `acc` is never read: the old push clears it on the handover tick) | 4,688 | 21 / 32 | | | | | |
+| `compact` (states in `q` bits: young 3, old 2; no REV, no IDLE — unborn = null pointers) | 4,457 | 21 / 32 | | | | | |
+| `noacc compact` | 4,407 | 21 / 32 | 60 | 52 | 47 × 15 | 36 × 4 | 1,062 |
+| `noacc fuse compact` (the first young and old steps composed into IN, Task 2) | 4,407 | 21 / 32 | 60 | 88 | 47 × 14 | 36 × 3 | 1,015 |
+| + `endent` (END allocated as an entry: no tag bit) | 4,392 | 21 / 32 | 60 | 87 | 46 × 14 | 36 × 3 | 1,000 |
+| + `endonce` (only the first young step of a tick ends a build) | **4,216** | 21 / 32 | 60 | 87 | **42** × 14 | 36 × 3 | **944** |
+| `tmp` (rv/ks merged, Task 4.2) | — | 34 / 64 | | | | | loss |
+| `rk` (rear and stack cells from one site), with or without `tmp`, with the rear entry in p1 or p3 | 4,300–4,476 | 34–38 / 64 | | | 40–44 | 34–36 | loss |
+
+Why `tmp` and `rk` lose: a code colour must be injective on every set of sites one pointer expression may point into,
+and both options create expressions whose kinds span two tags (`Fld(tmp, 1)` is an entry for a rear cell and a list for
+a stack cell; the shared site's own field is the union of the two tags' field kinds) — 34 or 38 colours, W₀ 64, a
+fallback of 98 rules and 68–76 helpers.
+
+Why `endonce` is sound: the young bank's text is shorter than its pattern until its first answering tick, so the young
+bank never has a full match and never reads `end`; only the old bank does. With `endonce` a young bank whose build ends
+in a later step waits in that state until the next tick's first step; the strict profile check (the young bank has left
+the build side by the end of its young window) makes sure END exists before the handover. It costs at most one tick of
+young steps per life, so the rates are re-validated (§3).
+
 (to be completed)
 
 ## 5. What is and is not established

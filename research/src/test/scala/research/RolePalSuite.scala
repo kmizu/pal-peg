@@ -50,9 +50,12 @@ class RolePalSuite extends munit.FunSuite {
   }
 
   private val lean = RolePal.Options(youngReport = false, fuseIn = true, compact = true)
+  private val leanest = RolePal.Options(youngReport = false, fuseIn = true, compact = true, sharedRK = true, rearInP3 = true, endAsEntry = true, endOnce = true)
 
   test("the size options keep the behaviour: the oracle's outputs and a clean role profile; without `compact` also = the old-limit model tick by tick") {
-    val opts = Vector(RolePal.Options(youngReport = false), RolePal.Options(mergeTmp = true), RolePal.Options(fuseIn = true), RolePal.Options(compact = true), lean)
+    val opts = Vector(RolePal.Options(youngReport = false), RolePal.Options(mergeTmp = true), RolePal.Options(fuseIn = true), RolePal.Options(compact = true), lean,
+      RolePal.Options(mergeTmp = true, sharedRK = true), RolePal.Options(endAsEntry = true), RolePal.Options(sharedRK = true, rearInP3 = true),
+      RolePal.Options(compact = true, endOnce = true), leanest)
     val model = OverlapPal.machine(15, 15, 16, G, 4)
     val words = OverlapProfile.adversarialWords(100) ++ LpsProfile.structuredWords(130) ++ OverlapProfile.randomWords(40, 129)
     for (o <- opts) {
@@ -70,7 +73,7 @@ class RolePalSuite extends munit.FunSuite {
   test("the size options through the code backend at minAnchor 8 (fallback below 12): PEG = interpreter on all words <= 13 (1/1) and <= 12 (2/2); rules <= 7; reachability <= 11") {
     // merging rv/ks unites the RNODE and KNODE site domains and fusing puts four FIFO sites into one layer: six colours at
     // 1/1, so these machines need W0 = 8
-    for (o <- Vector(RolePal.Options(youngReport = false, mergeTmp = true), RolePal.Options(compact = true), lean); (ky, ko, maxLen) <- Vector((1, 1, 13), (2, 2, 12))) {
+    for (o <- Vector(RolePal.Options(youngReport = false, mergeTmp = true), RolePal.Options(compact = true), lean, leanest); (ky, ko, maxLen) <- Vector((1, 1, 13), (2, 2, 12))) {
       val m = RolePal.machine(ky, ko, 8, o)
       val opts = LpsCode.Options(fallbackBelow = Some(OverlapPal.firstAnswer(8)), minBirth = 8)
       assertEquals(LpsCode.checkSim(m, maxLen, opts), None, s"$o $ky/$ko")

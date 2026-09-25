@@ -48,13 +48,21 @@ object OverlapPal {
 
   val ctlRegs: Vector[(String, Set[K])] = Vector("pw" -> Set(KInp), "nb" -> Set(KInp), "clk" -> Set(KInp))
   /** dj_1 .. dj_{log2 minAnchor - 1}: the dyadic-birth counter that enables the births from W0 on */
-  def djBits(minAnchor: Int): Vector[String] = (1 until Integer.numberOfTrailingZeros(minAnchor)).map(i => s"dj_$i").toVector
+  def djBits(minAnchor: Int): Vector[String] =
+    if (base3(minAnchor)) { (1 until Integer.numberOfTrailingZeros(minAnchor / 3)).map(i => s"dj_$i").toVector }
+    else { (1 until Integer.numberOfTrailingZeros(minAnchor)).map(i => s"dj_$i").toVector }
   def ctlBits(minAnchor: Int): Vector[String] = Vector("sm0", "sm1", "first", "b0", "b1", "out") ++ djBits(minAnchor)
+  /** a minimum anchor 3 * 2^k (k >= 2): the doubling clock starts at tick 3 (dyadic births 6, 12, 24, ...; the pools plan's
+    * W0 = 24 when 21 colours do not need 32) */
+  def base3(minAnchor: Int): Boolean = minAnchor % 3 == 0 && { val q = minAnchor / 3; q >= 4 && (q & (q - 1)) == 0 }
 
   def ct(minAnchor: Int): Prog = {
     val p = new Prog(0, 0, "", exclusive = true)
     val dj = djBits(minAnchor)
-    val dy = And(not(smIs(0)), IsNull(prevIn(Reg("nb"))))
+    val b3 = base3(minAnchor)
+    // base 3: the clock is set at tick 3, so the doubling ticks are 6, 12, 24, ... (nb is null on ticks 1 and 2)
+    val dy = if (b3) { all(not(smIs(0)), not(IsNull(Reg("nb"))), IsNull(prevIn(Reg("nb")))) } else { And(not(smIs(0)), IsNull(prevIn(Reg("nb")))) }
+    val start = if (b3) { smIs(2) } else { smIs(0) }
     val en: C = if (dj.isEmpty) { True } else { Bit(dj.last) }
     val bA = And(dy, en)
     val bB = And(not(IsNull(Reg("clk"))), IsNull(prevIn(Reg("clk"))))
@@ -62,8 +70,8 @@ object OverlapPal {
       for (i <- 0 until 2) { u.bit(s"sm$i", select((0 to 2).map(k => (smIs(k), bitOf(k + 1, i))), Bit(s"sm$i"))) }
       u.bit("first", Ite2(smIs(0), TagIs(In, 1), Bit("first")))
       for ((b, i) <- dj.zipWithIndex) { u.bit(b, Or(Bit(b), if (i == 0) { dy } else { And(Bit(dj(i - 1)), dy) })) }
-      u.set("pw", Ite(Or(smIs(0), dy), In, Reg("pw")))
-      u.set("nb", Ite(Or(smIs(0), dy), In, prevIn(Reg("nb"))))
+      u.set("pw", Ite(Or(start, dy), In, Reg("pw")))
+      u.set("nb", Ite(Or(start, dy), In, prevIn(Reg("nb"))))
       u.set("clk", Ite(bA, Reg("pw"), prevIn(Reg("clk"))))
       u.bit("b0", bA)
       u.bit("b1", bB)

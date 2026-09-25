@@ -37,7 +37,10 @@ object GapKmp {
   /** sub-states of a pop in progress: none; the two steps that splice the K stack held in `ks` */
   val S0 = 0; val SSPL1 = 1; val SSPL2 = 2
 
-  final class Tags(base: Int) {
+  /** `rearInP3`: a rear cell keeps its entry in p3 instead of p1 (so that a site shared by rear and stack cells has
+    * compatible field kinds: KNODE's p3 is a rear stack) */
+  final class Tags(base: Int, rearInP3: Boolean = false) {
+    val rearEntry: Int = if (rearInP3) { 3 } else { 1 }
     val IQC = base        // queue cell: p1 = input cell, p2 = below
     val ENTRY = base + 1  // p1 = letter cell, p2 = hL, p3 = hK, p4 = hR
     val END = base + 2    // p2 = LNODE(f_m, L), p3 = K, p4 = R: the reset state (f_m, g_m)
@@ -53,9 +56,11 @@ object GapKmp {
       LNODE -> Vector(Set(KTag(ENTRY)), listKinds, Set(), Set()),
       GNODE -> Vector(Set(KTag(ENTRY)), listKinds, Set(), Set()),
       KNODE -> Vector(listKinds, Set(KTag(KNODE)), Set(KTag(RNODE)), Set(KTag(KNODE))),
-      RNODE -> Vector(Set(KTag(ENTRY)), Set(KTag(RNODE)), Set(), Set()))
+      RNODE -> (if (rearInP3) { Vector(Set(), Set(KTag(RNODE)), Set(KTag(ENTRY)), Set()) } else { Vector(Set(KTag(ENTRY)), Set(KTag(RNODE)), Set(), Set()) }))
   }
   val bankTags: Vector[Tags] = Vector(new Tags(30), new Tags(40))
+  /** the one tag set of RolePal with the p3 rear layout */
+  val roleTagsP3: Tags = new Tags(30, rearInP3 = true)
 
   private def not(c: C): C = Not(c)
   private def selectE(cases: Seq[(C, E)], default: E): E = cases.foldRight(default) { case ((g, v), acc) => Ite(g, v, acc) }
@@ -77,8 +82,14 @@ object GapKmp {
     * (BUILD/BPOP), `q1 q0` = 00 transition state, 01 pop, 10 splice step 1, 11 splice step 2. There is no REV state
     * (the end of the build goes straight to MATCH) and no IDLE state: an unborn young core has `src` and `cur` null, an
     * unborn old core has `cur` null (`born`). */
+  /** `sharedRK`: the rear cell of a build step (RNODE) and the stack cell of a pop step (KNODE) come from one allocation
+    * site (a step never allocates both), so with `mergeTmp` the register `tmp` points into one site per layer and the
+    * colouring does not grow; `endAsEntry`: the END cell is allocated with the ENTRY tag (its letter field null), which
+    * drops the tag bit of the entry site */
   final class Core(M: Mod, T: Tags, feed: Feed, matchOnly: Boolean = false, report: Boolean = true, mergeTmp: Boolean = false,
-                   compact: Boolean = false) extends OverlapPal.BankCore {
+                   compact: Boolean = false, sharedRK: Boolean = false, endAsEntry: Boolean = false, endStep: Boolean = true)
+      extends OverlapPal.BankCore {
+    require(endStep || compact, "a step without the end-of-build transition needs the compact states (the pending end is a state)")
     import M.*
     import T.*
     private val rvName = if (mergeTmp) { "tmp" } else { "rv" }
@@ -87,7 +98,7 @@ object GapKmp {
     val regs: Vector[(String, Set[K])] = Vector(n("cur") -> Set(KTag(ENTRY)), n("L") -> listKinds,
       n("K") -> Set(KTag(KNODE)), n("R") -> Set(KTag(RNODE))) ++
       (if (mergeTmp) { Vector(n("tmp") -> Set[K](KTag(RNODE), KTag(KNODE))) } else { Vector(n("rv") -> Set[K](KTag(RNODE)), n("ks") -> Set[K](KTag(KNODE))) }) ++
-      Vector(n("end") -> Set(KTag(END)))
+      Vector(n("end") -> Set[K](KTag(if (endAsEntry) { ENTRY } else { END })))
     private val qBits = if (matchOnly) { 2 } else { 3 }
     val bits: Vector[String] = (if (report) { Vector(n("acc")) } else { Vector() }) ++ (if (compact) { (0 until qBits).map(i => n(s"q$i")).toVector } else { Vector() })
     private def q(i: Int): C = B(s"q$i")
@@ -127,7 +138,8 @@ object GapKmp {
       val k1 = Fld(K, 1); val k2 = Fld(K, 2); val k3 = Fld(K, 3); val k4 = Fld(K, 4)
       val liveEmpty = all(IsNull(L), IsNull(K), IsNull(R))
       val kTop = all(IsNull(L), not(IsNull(K)), IsNull(k4), IsNull(k3), TagIs(k1, LNODE))   // the next entry is k1's head
-      val rOnly = all(IsNull(L), IsNull(K), not(IsNull(R)), IsNull(Fld(R, 2)))                // the live sequence is the single entry R.p1
+      val rOnly = all(IsNull(L), IsNull(K), not(IsNull(R)), IsNull(Fld(R, 2)))                // the live sequence is the single entry of R
+      def rearE(x: E): E = Fld(x, T.rearEntry)                                                    // the entry of a rear cell
       val rvLast = IsNull(Fld(rv, 2))
       // pop-progress guards (priority order)
       val gRev = if (mergeTmp) { all(popping, stSub(S0), not(IsNull(rv))) } else { And(popping, not(IsNull(rv))) }
@@ -147,7 +159,7 @@ object GapKmp {
       val gPopR = all(gPop0, IsNull(L), IsNull(K), not(IsNull(R)))
       // transitions
       val gBuildT = And(stBuild, not(IsNull(src)))
-      val gEnd = all(stBuild, IsNull(src), not(IsNull(cur)))
+      val gEnd = if (endStep) { all(stBuild, IsNull(src), not(IsNull(cur))) } else { False }   // otherwise the bank waits in this state
       val gRevPhase = if (compact) { False } else { at(REV) }   // a Mod without phase bits has no at()
       val gMatchT = all(stMatch, not(rev), not(IsNull(pendF)))
       val gFifoRev = And(stMatch, Or(rev, And(IsNull(pendF), not(IsNull(pendB)))))
@@ -156,16 +168,24 @@ object GapKmp {
       // shared allocation sites, one per tag: the list node (GNODE for the mismatch sequence of a transition, LNODE
       // otherwise), the entry (END at the end of the pattern), the K node, the R node, the queue cell
       val lnode: E = p.site(TE.Ite(gTrans, Const(GNODE), Const(LNODE)),
-        selectE(Vector((gRev, Fld(rv, 1)), (gPopG, gE), (gPopR, Fld(R, 1)), (gTakeRev, Fld(k3, 1))), cur),
+        selectE(Vector((gRev, rearE(rv)), (gPopG, gE), (gPopR, rearE(R)), (gTakeRev, rearE(k3))), cur),
         Ite(gPopG, Fld(L, 2), Ite(Or(gPopR, gTakeRev), Null, L)), Null, Null)
-      val entry: E = if (matchOnly) { Null } else { p.site(TE.Ite(gEnd, Const(END), Const(ENTRY)),
+      val entry: E = if (matchOnly) { Null } else { p.site(if (endAsEntry) { Const(ENTRY) } else { TE.Ite(gEnd, Const(END), Const(ENTRY)) },
         Ite(gEnd, Null, src), Ite(gEnd, lnode, Ite(same, lnode, L)), K, R) }
-      val knode: E = p.site(Const(KNODE),
-        selectE(Vector((gPopG, lnode), (gSpl2, Fld(ks, 1)), (gSpl1, Null)), k1),
-        selectE(Vector((gPopG, K), (gSpl1, K), (gSpl2, K)), k2),
-        selectE(Vector((gPopG, Fld(gE, 4)), (gSpl2, Fld(ks, 3)), (gSpl1, Null), (gTakeRev, Null)), k3),
-        selectE(Vector((gPopG, Fld(gE, 3)), (gSpl1, Fld(ks, 2)), (gSpl2, Fld(ks, 4))), Null))
-      val rnode: E = if (matchOnly) { Null } else { p.site(Const(RNODE), entry, Ite(all(gBuildT, same, rOnly), Null, R), Null, Null) }   // fast4: the rear becomes [E_i]
+      val kf1 = selectE(Vector((gPopG, lnode), (gSpl2, Fld(ks, 1)), (gSpl1, Null)), k1)
+      val kf2 = selectE(Vector((gPopG, K), (gSpl1, K), (gSpl2, K)), k2)
+      val kf3 = selectE(Vector((gPopG, Fld(gE, 4)), (gSpl2, Fld(ks, 3)), (gSpl1, Null), (gTakeRev, Null)), k3)
+      val kf4 = selectE(Vector((gPopG, Fld(gE, 3)), (gSpl1, Fld(ks, 2)), (gSpl2, Fld(ks, 4))), Null)
+      val rearNext = Ite(all(gBuildT, same, rOnly), Null, R)   // fast4: the rear becomes [E_i]
+      def rearFields(e: E, next: E): Vector[E] = if (T.rearEntry == 3) { Vector(Null, next, e, Null) } else { Vector(e, next, Null, Null) }
+      val (knode, rnode) = if (sharedRK && !matchOnly) {
+        val rf = rearFields(entry, rearNext)
+        val rk = p.site(TE.Ite(gBuildT, Const(RNODE), Const(KNODE)), Ite(gBuildT, rf(0), kf1), Ite(gBuildT, rf(1), kf2), Ite(gBuildT, rf(2), kf3), Ite(gBuildT, rf(3), kf4))
+        (rk, rk)
+      } else {
+        val kn = p.site(Const(KNODE), kf1, kf2, kf3, kf4)
+        (kn, if (matchOnly) { Null } else { val rf = rearFields(entry, rearNext); p.site(Const(RNODE), rf(0), rf(1), rf(2), rf(3)) })
+      }
       val iq: E = p.site(Const(IQC), if (matchOnly) { Fld(pendB, 1) } else { Ite(stBuild, src, Fld(pendB, 1)) }, pendF, Null, Null)
       def leave(u: Prog#Upd): Unit =
         if (compact) { u.bit(n("q1"), False); u.bit(n("q0"), False) }   // back to the transition state of the same side
@@ -177,19 +197,19 @@ object GapKmp {
       /** the pattern source advances; the first k letters (the replay countdown rc) are prepended to the FIFO */
       def consumeSrc(u: Prog#Upd): Unit = { u.set(feed.src, prevIn(src)); u.set(feed.pendF, Ite(IsNull(rc), pendF, iq)); u.set(feed.rc, prevIn(rc)) }
       // ---- pop in progress
-      p.when(And(gRev, rvLast)) { u => u.set(n("cur"), Fld(rv, 1)); u.set(n(rvName), Null); leave(u) }   // the last reversed entry is the state
+      p.when(And(gRev, rvLast)) { u => u.set(n("cur"), rearE(rv)); u.set(n(rvName), Null); leave(u) }   // the last reversed entry is the state
       p.when(gRev) { u => u.set(n("L"), lnode); u.set(n(rvName), Fld(rv, 2)) }
       p.when(gSpl1) { u => u.set(n("K"), Ite(IsNull(Fld(ks, 2)), K, knode)); setSub(u, SSPL2) }          // the spliced stack's own rest first
       p.when(gSpl2) { u => u.set(n("K"), knode); u.set(n(ksName), Null); setSub(u, S0) }                    // then its three slots
       p.when(gPopL) { u => u.set(n("cur"), Fld(L, 1)); u.set(n("L"), Fld(L, 2)); leave(u) }
       p.when(gPopG) { u => u.set(n("L"), Fld(gE, 2)); u.set(n("K"), knode) }                          // gap(e) ++ [e] ++ rest in one step
       p.when(gTakeSpl) { u => u.set(n(ksName), k4); u.set(n("K"), knode); setSub(u, SSPL1) }
-      p.when(gTakeRev1) { u => u.set(n("cur"), Fld(k3, 1)); u.set(n("K"), Ite(IsNull(k1), k2, knode)); leave(u) }
+      p.when(gTakeRev1) { u => u.set(n("cur"), rearE(k3)); u.set(n("K"), Ite(IsNull(k1), k2, knode)); leave(u) }
       p.when(gTakeRev) { u => u.set(n("L"), lnode); u.set(n(rvName), Fld(k3, 2)); u.set(n("K"), Ite(IsNull(k1), k2, knode)) }
       p.when(gTakePop) { u => u.set(n("cur"), Fld(k1, 1)); u.set(n("L"), Fld(k1, 2)); u.set(n("K"), k2); leave(u) }
       p.when(gTakeList) { u => u.set(n("L"), k1); u.set(n("K"), k2) }
       p.when(gTakeEmpty) { u => u.set(n("K"), k2) }
-      p.when(gPopR1) { u => u.set(n("cur"), Fld(R, 1)); u.set(n("R"), Null); leave(u) }
+      p.when(gPopR1) { u => u.set(n("cur"), rearE(R)); u.set(n("R"), Null); leave(u) }
       p.when(gPopR) { u => u.set(n("L"), lnode); u.set(n(rvName), Fld(R, 2)); u.set(n("R"), Null) }   // the top goes to L, the rest is reversed
       load(p)
       // ---- BUILD: the pattern letter src against cur = E_f; E_i = (src, h_i) with h_i = same ? C : g,
@@ -202,14 +222,14 @@ object GapKmp {
         val fast3 = And(same, kTop)                 // D = [head of the list on top of K] ++ …
         val fast4 = And(same, rOnly)                // D = [R.p1, E_i]: pop R.p1, the rear becomes [E_i]
         val misZ = all(not(same), IsNull(Fld(cur, 2)), IsNull(Fld(cur, 3)), IsNull(Fld(cur, 4)))   // gap(cur) empty (E_0): D = [cur] ++ g ++ [E_i]
-        u.set(n("cur"), selectE(Vector((fast1, Fld(L, 1)), (fast2, entry), (fast3, Fld(k1, 1)), (fast4, Fld(R, 1))), cur))
+        u.set(n("cur"), selectE(Vector((fast1, Fld(L, 1)), (fast2, entry), (fast3, Fld(k1, 1)), (fast4, rearE(R))), cur))
         u.set(n("L"), selectE(Vector((fast1, Fld(L, 2)), (fast3, Fld(k1, 2)), (Or(same, misZ), L)), lnode))
         u.set(n("K"), Ite(fast3, k2, K))
         u.set(n("R"), Ite(fast2, R, rnode))
         consumeSrc(u)
         popUnless(u, any(fast1, fast2, fast3, fast4, misZ), BUILD, BPOP)
       }
-      if (compact) { p.when(gEnd) { u => u.set(n("end"), entry); u.bit(n("q2"), True); u.bit(n("q1"), False); u.bit(n("q0"), False) } }
+      if (compact) { if (endStep) { p.when(gEnd) { u => u.set(n("end"), entry); u.bit(n("q2"), True); u.bit(n("q1"), False); u.bit(n("q0"), False) } } }
       else {
         p.when(gEnd) { u => u.set(n("end"), entry); u.phase(REV) }
         p.when(gRevPhase) { u => u.phase(MATCH) }
@@ -224,7 +244,7 @@ object GapKmp {
         val fastK = And(same, kTop)
         val fastR = And(same, rOnly)
         val misZ = all(not(same), IsNull(Fld(cur, 2)), IsNull(Fld(cur, 3)), IsNull(Fld(cur, 4)))
-        u.set(n("cur"), selectE(Vector((fastM, Fld(L, 1)), (fastK, Fld(k1, 1)), (fastR, Fld(R, 1))), cur))
+        u.set(n("cur"), selectE(Vector((fastM, Fld(L, 1)), (fastK, Fld(k1, 1)), (fastR, rearE(R))), cur))
         u.set(n("L"), selectE(Vector((fastM, Fld(L, 2)), (fastK, Fld(k1, 2)), (full, Fld(end, 2)), (And(not(same), not(misZ)), lnode)), L))
         u.set(n("K"), selectE(Vector((fastK, k2), (full, Fld(end, 3))), K))
         u.set(n("R"), selectE(Vector((fastR, Null), (full, Fld(end, 4))), R))
