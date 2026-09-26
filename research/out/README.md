@@ -3,7 +3,8 @@
 - `anchors-role-y13-o4-w64-n999.peg.gz` — **the current best (2026-09-26, `STRATEGY.md` §3b): 999 rules.** Role machine
   13/4, configuration A, `Code` by star, anchors at β = 7/16 (the staged clock), W₀ = 64 (first machine answer 92), inlined at
   ×4.40: 724,780 rhs nodes, max rhs 21,425, 2,984,353 bytes (167,877 gzipped). Re-parsed = oracle on all words ≤ 9; Rust runner
-  on the 140 raw words and the 16 palindromes the grids found: 0 mismatches. Rates: three seeds and every length ≤ 2,049.
+  on the 140 raw words and the 16 palindromes the grids found: 0 mismatches. Rates: three seeds and every length ≤ 2,049;
+  25 sampled lengths up to 9,000 (283 words); the runner on 12 words of 4,097 and 9,000 letters: 0 mismatches.
   `metrics/anchors-role-y13-o4-w64-n999.json`, curves of all S3/S2′ configurations `metrics/anchors-inline-curves.md`.
   Reproduce: `run lps-code export role 13 4 64 A.peg noacc fuse compact endent endonce star beta=7/16` then
   `run lps-inline-curve A.peg 16 65536 curve.md 1000 out.peg out.json`.

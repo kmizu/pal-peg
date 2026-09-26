@@ -617,8 +617,11 @@ object Main {
         // an optional "every=<maxLen>": the runner words at every length (OverlapProfile.everyLengthWords)
         // (its random palindromes use seed 5 unless a seed is given)
         configs.collectFirst { case x if x.startsWith("every=") =>
-          "every" -> OverlapProfile.everyLengthWords(x.drop(6).toInt, configs.collectFirst { case y if y.startsWith("seed=") => y.drop(5).toLong }.getOrElse(5L)) }.toVector
-      for (cfg <- configs if !cfg.startsWith("seed=") && !cfg.startsWith("beta=") && !cfg.startsWith("every=")) {
+          "every" -> OverlapProfile.everyLengthWords(x.drop(6).toInt, configs.collectFirst { case y if y.startsWith("seed=") => y.drop(5).toLong }.getOrElse(5L)) }.toVector ++
+        // an optional "lengths=<n1>,<n2>,…": the same kinds of words at the given lengths only (sampled long words)
+        configs.collectFirst { case x if x.startsWith("lengths=") =>
+          "lengths" -> OverlapProfile.lengthWords(x.drop(8).split(",").map(_.toInt).toVector, configs.collectFirst { case y if y.startsWith("seed=") => y.drop(5).toLong }.getOrElse(5L)) }.toVector
+      for (cfg <- configs if !cfg.startsWith("seed=") && !cfg.startsWith("beta=") && !cfg.startsWith("every=") && !cfg.startsWith("lengths=")) {
         // a/b/old: the old-limit model; r<ky>/<ko>: the role machine
         val t0 = System.nanoTime()
         val r = if (cfg.startsWith("r")) {
