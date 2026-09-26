@@ -21,6 +21,24 @@ class AnchorSchedSuite extends munit.FunSuite {
     assertEquals(OverlapPal.anchors(64, 400, b1332), Vector(64, 90, 128, 180, 256, 360))
   }
 
+  test("the word families of the long validations: lengthWords gives the runner's seven kinds and four more random palindromes per length; everyLengthWords covers every length") {
+    def tm(k: Int): String = (0 until k).map(i => if (Integer.bitCount(i) % 2 == 0) 'a' else 'b').mkString
+    def tmPal(n: Int): String = { val h = tm(n / 2); h + (if (n % 2 == 1) "a" else "") + h.reverse }
+    val ws = OverlapProfile.lengthWords(Vector(100, 101))
+    for (n <- Vector(100, 101)) {
+      val at = ws.filter(_.length == n)
+      assertEquals(at.size, 11, s"n = $n")
+      // palindromes: b a^(n-2) b, the Thue–Morse one, a^i b a^j b a^i, five random ones; (aab)* too when n = 2 mod 3
+      assertEquals(at.count(LpsPal.isPal), if (n % 3 == 2) { 9 } else { 8 }, s"n = $n")
+      assert(at.contains(tmPal(n)) && at.contains("b" + "a" * (n - 2) + "b"), s"n = $n")
+    }
+    assertEquals(ws.size, 22)
+    val every = OverlapProfile.everyLengthWords(60)
+    assert(every.forall(w => w.length >= 3 && w.length <= 60))
+    for (n <- 3 to 60) { assert(every.contains(tmPal(n)) && every.contains("b" + "a" * (n - 2) + "b"), s"n = $n") }
+    assertEquals(every, OverlapProfile.everyLengthWords(60))
+  }
+
   test("beta = 1/2 builds the original controller") {
     assertEquals(OverlapPal.ctlRegsOf(OverlapPal.Half), OverlapPal.ctlRegs)
     assertEquals(OverlapPal.ctlBitsOf(32, OverlapPal.Half), OverlapPal.ctlBits(32))

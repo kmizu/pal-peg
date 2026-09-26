@@ -244,6 +244,14 @@ on the 140 raw words of `probes/runner_words.py 24 600` and on the 16 palindrome
 (×9.75, 7,958,678 bytes) it is 2.7 times smaller at the same N, and its curve is ×2 1,257, ×3 1,090, ×4 1,018
 (15/4 with E1: 1,368, 1,184, 1,105). All the curves: `out/metrics/anchors-inline-curves.md`.
 
+**Long words** (measured, 2026-09-26). The failures found so far were short early lives, but a rate deficit could also
+accumulate over long palindromes. `pool-grid … lengths=<n1,…>` (`OverlapProfile.lengthWords`: the runner's seven kinds and
+four more random palindromes per length) at 25 lengths up to 9,000 — 2943, 2944, 2945, 4095, 4096, 4097, 5887, 5888, 5889, 8191, 8192, 8193, 9000, 3840, 3975, 4829, 5617, 6445, 7116, 7192, 7559, 7690, 7923, 8091, 8301 —
+283 words: PASS. Old backlog maximum and the longest run of old ticks behind: 182 and 282 (every length ≤ 1,025), 449 and
+570 (every length ≤ 2,049), 914 and 1,758 (the 25 sampled lengths ≤ 9,000): no faster than the length. The Rust runner on
+the grammar itself with 12 words of 4,097 and 9,000 letters (Thue–Morse palindrome and a flip, two random palindromes,
+`a^i b a^j b a^i`, `b a^n b`): 0 mismatches, 7–25 s and up to 2.4 billion steps per word. Still an observation, not a proof.
+
 ### Where this leaves the ranking
 
 | lever | status |

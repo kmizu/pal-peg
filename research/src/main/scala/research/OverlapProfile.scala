@@ -332,23 +332,36 @@ object OverlapProfile {
     * the Thue–Morse palindrome and a flip at n/3, period 3, `a^i b a^j b a^i` with i = n/4, a random palindrome */
   def everyLengthWords(maxLen: Int, seed: Long = 5L): Vector[String] = {
     val rnd = new scala.util.Random(seed)
+    (3 to maxLen).flatMap(n => wordsAt(n, rnd)).toVector.distinct
+  }
+
+  /** the runner's seven kinds of words at length n (the random palindrome drawn from rnd) */
+  private def wordsAt(n: Int, rnd: scala.util.Random): Vector[String] = {
     def tm(k: Int): String = (0 until k).map(i => if (Integer.bitCount(i) % 2 == 0) 'a' else 'b').mkString
     def pal(k: Int): String = { val h = tm(k / 2); h + (if (k % 2 == 1) "a" else "") + h.reverse }
     def flip(w: String, i: Int): String = w.updated(i, if (w(i) == 'a') 'b' else 'a')
     val ws = Vector.newBuilder[String]
-    for (n <- 3 to maxLen) {
-      ws += "b" + "a" * (n - 2) + "b"
-      ws += "b" + "a" * (n - 3) + "bb"
-      val p = pal(n)
-      ws += p
-      ws += flip(p, n / 3)
-      ws += ("aab" * n).take(n)
-      val i = math.max(1, n / 4); val j = n - 2 * i - 2
-      if (j >= 0) { ws += "a" * i + "b" + "a" * j + "b" + "a" * i }
-      val half = Vector.fill(n / 2)(if (rnd.nextBoolean()) 'a' else 'b').mkString
-      ws += half + (if (n % 2 == 1) "a" else "") + half.reverse
-    }
-    ws.result().distinct
+    ws += "b" + "a" * (n - 2) + "b"
+    ws += "b" + "a" * (n - 3) + "bb"
+    val p = pal(n)
+    ws += p
+    ws += flip(p, n / 3)
+    ws += ("aab" * n).take(n)
+    val i = math.max(1, n / 4); val j = n - 2 * i - 2
+    if (j >= 0) { ws += "a" * i + "b" + "a" * j + "b" + "a" * i }
+    ws += randomPal(n, rnd)
+    ws.result()
+  }
+  private def randomPal(n: Int, rnd: scala.util.Random): String = {
+    val half = Vector.fill(n / 2)(if (rnd.nextBoolean()) 'a' else 'b').mkString
+    half + (if (n % 2 == 1) "a" else "") + half.reverse
+  }
+
+  /** the seven kinds at each of the given lengths, plus `extra` more random palindromes per length (sampled long words:
+    * `pool-grid … lengths=4097,9000`) */
+  def lengthWords(ns: Seq[Int], seed: Long = 5L, extra: Int = 4): Vector[String] = {
+    val rnd = new scala.util.Random(seed)
+    ns.flatMap(n => wordsAt(n, rnd) ++ Vector.fill(extra)(randomPal(n, rnd))).toVector.distinct
   }
 
   /** One configuration of the rate grid: bank A `a` and bank B `b` copies per tick, the old bank limited to `old`. */
