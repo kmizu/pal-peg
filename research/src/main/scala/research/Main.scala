@@ -414,6 +414,51 @@ object Main {
           "rounds" -> trace.map { case (n, nodes, p) => s"$n/$nodes/$p" }.mkString(" "), "sha256_uncompressed" -> sha))
         java.nio.file.Files.write(java.nio.file.Paths.get(outJson), json.getBytes("UTF-8"))
       }
+    case "step-bigrams" :: kyS :: koS :: w0S :: family :: rest0 =>
+      // step-bigrams <ky> <ko> <W0> random <count> <maxLen> | every <maxLen> [role flags] [beta=..]: the branch of every young step
+      // (YU/YUF slots, from the guards on the state before it) and the pairs of consecutive busy young steps (STRATEGY.md §3e, E3)
+      val sc = OverlapPal.schedArg(rest0)
+      val ro = RolePal.Options(youngReport = !rest0.contains("noacc"), fuseIn = rest0.contains("fuse"), compact = rest0.contains("compact"),
+        endAsEntry = rest0.contains("endent"), endOnce = rest0.contains("endonce"), sched = sc, unfold = rest0.contains("unfold"), mergeTmp = rest0.contains("tmp"),
+        lgap = rest0.contains("lgap"), merge2 = rest0.contains("merge2"),
+        merge3 = rest0.contains("merge3"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => rest0.contains(s"no$x")))
+      val nums = rest0.filter(_.forall(_.isDigit)).map(_.toInt)
+      val words = family match {
+        case "random" => OverlapProfile.randomWords(nums(0), nums(1))
+        case _ => OverlapProfile.everyLengthWords(nums(0))
+      }
+      val m = RolePal.machine(kyS.toInt, koS.toInt, w0S.toInt, ro)
+      val br = RolePal.youngBranches(ro)
+      val uni = scala.collection.mutable.HashMap.empty[String, Long]
+      val bi = scala.collection.mutable.HashMap.empty[(String, String), Long]
+      for (w <- words) {
+        var prev: Lpm.State = null
+        var last: String = ""
+        Lps.traceSlots(m, w) { (_, slot, st) =>
+          if ((slot == "YU" || slot == "YUF") && prev != null) {
+            val k = br.collectFirst { case (name, g) if Lpm.holds(g, prev) => name }.getOrElse("idle")
+            uni(k) = uni.getOrElse(k, 0L) + 1
+            if (k == "popG") {
+              import Lpm.E.{Fld, Reg}
+              import Lpm.C.{IsNull, And, TagIs}
+              val gE = Fld(Reg("y_L"), 1)
+              val empty = And(IsNull(Fld(gE, 2)), And(IsNull(Fld(gE, 3)), IsNull(Fld(gE, 4))))
+              val kk = if (Lpm.holds(empty, prev)) { "+popG gE gap empty" } else { "+popG gE gap nonempty" }
+              uni(kk) = uni.getOrElse(kk, 0L) + 1
+              val ktag = if (Lpm.holds(TagIs(Fld(gE, 2), GapKmp.roleTagsP3.GNODE), prev)) { "+popG gE.hL is GNODE" } else { "+popG gE.hL other" }
+              uni(ktag) = uni.getOrElse(ktag, 0L) + 1
+            }
+            if (k != "idle") { if (last.nonEmpty) { bi((last, k)) = bi.getOrElse((last, k), 0L) + 1 }; last = k }
+          }
+          if (slot == "CT" && (st.bits("b0") || st.bits("b1"))) { last = "" }   // a new young life
+          prev = st
+        }
+      }
+      val busy = uni.filter(k => k._1 != "idle" && !k._1.startsWith("+")).values.sum
+      println(f"${words.size} words; young busy steps $busy, idle ${uni.getOrElse("idle", 0L)}")
+      for ((k, c) <- uni.toVector.sortBy(-_._2)) { println(f"  $k%-15s $c%10d ${100.0 * c / math.max(busy, 1)}%6.2f%%") }
+      println("pairs of consecutive busy young steps (top 25):")
+      for (((a, b), c) <- bi.toVector.sortBy(-_._2).take(25)) { println(f"  $a%-15s -> $b%-15s $c%10d ${100.0 * c / math.max(busy, 1)}%6.2f%%") }
     case "peg-cse-probe" :: path :: topS :: thresholdS :: _ =>
       // peg-cse-probe <grammar.peg> <top> <threshold>: the sub-expressions whose naming as a rule saves the most nodes (PegCse)
       val g = Grammar.parse(new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path)), "UTF-8"))
@@ -548,10 +593,11 @@ object Main {
       // pal3: LpsWarmup.machine(m, f, W0), fallback below 2 W0; overlap: OverlapPal.machine(a, b, W0), fallback below 3 W0 / 2
       val trie = rest.contains("trie")
       // role options: noacc (no young acc), tmp (rv/ks merged), fuse (first old and young steps fused into IN)
-      val roleFlags = Set("noacc", "tmp", "fuse", "compact", "rk", "endent", "endonce", "p3", "star", "unfold", "mirror")
+      val roleFlags = Set("noacc", "tmp", "fuse", "compact", "rk", "endent", "endonce", "p3", "star", "unfold", "mirror", "pairs", "recolour", "lgap", "merge2", "merge3", "noU", "noG", "noR", "noR1", "noR2")
       val ropts = RolePal.Options(youngReport = !rest.contains("noacc"), mergeTmp = rest.contains("tmp"), fuseIn = rest.contains("fuse"), compact = rest.contains("compact"),
         sharedRK = rest.contains("rk"), endAsEntry = rest.contains("endent"), endOnce = rest.contains("endonce"), rearInP3 = rest.contains("p3"),
-        sched = OverlapPal.schedArg(rest), unfold = rest.contains("unfold"))
+        sched = OverlapPal.schedArg(rest), unfold = rest.contains("unfold"), pairs = rest.contains("pairs"), lgap = rest.contains("lgap"),
+        merge2 = rest.contains("merge2"), merge3 = rest.contains("merge3"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => rest.contains(s"no$x")))
       val args = rest.filter(x => x != "trie" && !roleFlags(x) && !x.startsWith("beta="))
       val isOverlap = kind == "overlap" || kind == "gap" || kind == "role"
       val coreKind: OverlapPal.CoreKind = if (kind == "gap") { OverlapPal.GapCore } else { OverlapPal.Kmp2Core }
@@ -559,7 +605,7 @@ object Main {
         if (kind == "role") { RolePal.machine(ms, fs, w0, ropts) } else if (isOverlap) { OverlapPal.machine(ms, fs, w0, coreKind) } else { LpsWarmup.machine(ms, fs, w0) }
       def firstAnswer(w0: Int): Int = if (isOverlap) { OverlapPal.firstAnswer(w0, ropts.sched) } else { LpsWarmup.firstAnswer(w0) }
       def opts(w0: Int) = LpsCode.Options(fallbackBelow = Some(firstAnswer(w0)), minBirth = w0, dispatch = if (trie) { LpsCode.Trie } else { LpsCode.Direct },
-        codeByStar = rest.contains("star"), mirrorFallback = rest.contains("mirror"))
+        codeByStar = rest.contains("star"), mirrorFallback = rest.contains("mirror"), recolour = rest.contains("recolour"))
       // the colours do not depend on the controller; the staged clock needs its smallest W0
       def colours(ms: Int, fs: Int): Int = LpsCode.compileMeta(mk(ms, fs, if (ropts.sched.half) { 2 } else { math.max(8, ropts.sched.minW0) })).coloring.count
       // W0: "auto" = the power of two >= colours; "auto3" = the smallest 3 * 2^k (k >= 2) >= colours (a base-3 clock, RolePal)
@@ -676,7 +722,8 @@ object Main {
           val (sizes, flags) = cfg.drop(1).split(":", 2) match { case Array(a) => (a, Set.empty[String]); case Array(a, f) => (a, f.split(",").toSet) }
           val Array(ky, ko) = sizes.split("/").map(_.toInt)
           val ro = RolePal.Options(youngReport = !flags("noacc"), mergeTmp = flags("tmp"), fuseIn = flags("fuse"), compact = flags("compact"),
-            sharedRK = flags("rk"), endAsEntry = flags("endent"), endOnce = flags("endonce"), rearInP3 = flags("p3"), sched = sc, unfold = flags("unfold"))
+            sharedRK = flags("rk"), endAsEntry = flags("endent"), endOnce = flags("endonce"), rearInP3 = flags("p3"), sched = sc, unfold = flags("unfold"),
+            lgap = flags("lgap"), merge2 = flags("merge2"), merge3 = flags("merge3"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => flags(s"no$x")))
           OverlapProfile.grid(cfg, RolePal.machine(ky, ko, minAnchor, ro), minAnchor, true, families, threadsS.toInt, OverlapProfile.Roles, ro.fuseIn, sc)
         } else {
           // a/b/old[:unfold]

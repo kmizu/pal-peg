@@ -14,8 +14,8 @@ inliner gives 1,377 (×2 nodes), 1,194 (×3), 1,120 (×4), **999 (×9.75, 1,945,
 **Correction (§3b): that machine, and both 999-rule grammars made from it, answer false on a 79-letter palindrome.** The
 grammar that replaces them (13/4, β 7/16, W₀ 64): 999 rules at ×4.40, 2,984,353 bytes; ×2 1,257, ×3 1,090, ×4 1,018.
 
-**Current best (§3d):** 12/4 + unfold + `tmp`, W₀ 128, mirrored fallback, common sub-expressions named: 996 rules at 472,260
-rhs nodes (×2.7), 2,033,703 bytes; ×2 1,146, ×3 968, ×4 910.
+**Current best (§3e):** 11/4 + unfold + `tmp` + `lgap` + the unfold-then-popL merge, β 13/32, W₀ 128, mirrored fallback, common
+sub-expressions named: 994 rules at 438,487 rhs nodes (×2.56), 1,905,775 bytes; ×2 1,098, ×3 951. (§3d: 996 rules at 472,260.)
 
 ## 1. Diagnosis: what survives the inliner, and why (measured)
 
@@ -416,6 +416,69 @@ a flip of it, the Thue–Morse palindrome and a flip, at each length: the fallba
 | §3b (13/4, W₀ 64) | 724,780 nodes (×4.40) | 2,984,353 |
 | §3c (12/4 + unfold + `tmp`, W₀ 128, naming) | 531,531 nodes (×3.5) | 2,283,029 |
 | **§3d (+ mirrored fallback)** | **472,260 nodes (×2.7)** | **2,033,703** |
+
+## 3e. Looking for a dramatic cut: seven ideas measured (2026-09-27)
+
+The 996 rules of §3d are about 250 per-layer registers (young ≈ 18 per layer, every pointer twice: its value `x` and its colour
+code `x_c`), 212 site fields, and about 500 shared helpers (conditions K, reads X, named sub-expressions, `Tail`). A young
+layer is worth a lot: the same machine with young 12, 11, 10 reaches 999 rules at 528,756, 398,492 and 301,314 rhs nodes
+(−25 % per layer). Seven ideas, each implemented and measured (every number below is measured):
+
+| # | idea | result |
+|---|---|---|
+| A | **two steps per slot** (`pairs`: `Lpm.fuse` of two young/old steps) | worse: the same 3,648 compact rules but 208,896 nodes; 999 rules at 952,966 nodes. The second step reads the first step's registers many times, so their expressions are copied; the greedy kept those registers for a reason |
+| B | **colours by use** (`recolour`: the most referenced colour gets the shortest `Tail_c`) | no effect (999 at 528,984): `Tail_c` is a chain of two-node rules, so its price hardly depends on c |
+| C | **no RHS cap** (`maxRhs` 4,000,000) | no effect: the cap of 65,536 never binds |
+| D | **a look at the steps** (E3, `step-bigrams`: the branch of every young step from its guards) | reversal chains 19 % of the young steps; `popG → takePop` 6 %, of which 79 % unfold a GNODE whose entry has an empty gap |
+| E | **`lgap`**: an entry with an empty gap gets an LNODE, not a GNODE (gap(cur) ++ [cur] ++ L = [cur] ++ L) | free (+66 nodes at 999) and −5 … −16 % young steps; alone not enough for young 11 |
+| F | **merging a pop with the pop that always follows it** without new cells (`merge2`: U = mismatch-unfold then popL, G = popG then popL, R = R1 + R2, the last two entries of a reversal (R1 `rev`, R2 `takeRev`); `merge3`: splice shortcuts, build + takeRev1) | young 11 at β 7/16 needs R1 for the period-3 words and U (or G) for the random ones; the cheapest combination that passes the seed-21 set, `lgap` + R1 + U, reaches 999 at 520,517 nodes (−1.6 %), because the merges' nested reads cost about what the saved layer is worth; all of `merge2` 865,767, `merge3` 1.49 M |
+| G | **old 3** with the merges | at young 12, `lgap` alone fails (n 357); `lgap` + R1 + U passes every length ≤ 1,025; by the young-11 costs those merges cost more than an old layer (estimate) |
+
+Two findings on the way:
+
+- **A literal `False` guard is compiled in.** The first measurements of E and F were inflated: an option that was off still
+  left `p.when(False)`, `(False, e)` cases and `all(…, True)` in the step, and the compiler turned them into rules and nodes (the
+  12/4 compact grammar grew from 3,648 to 3,792–3,856 rules with every option off). The options now add branches and cases only
+  when they are on; a test checks that the §3d compact grammar keeps its sha256.
+- **Balanced anchors help the merges.** At β 13/32 (A and B at 4.92 and 4.74 letters per tick instead of 4.57 and 5.11), young 11
+  passes with `lgap` + U alone (at 7/16 it needs R1 as well), and U is the cheapest merge.
+
+### The grammar of §3e: role 11/4, `lgap` + U, β 13/32, W₀ 128
+
+Role 11/4, configuration A + `unfold` + `tmp` + `lgap` + `merge2` without G and R (the mismatch-unfold-then-popL merge),
+β = 13/32, W₀ = 128 (first machine answer 180), mirrored fallback. Rates (measured): every length ≤ 1,025 with seeds 5 and 7,
+the three seeds (3,297 + 3,706 + 6,297 words), 25 sampled lengths ≤ 9,000 and every length ≤ 2,049: all pass (the last two on 283 and 14,326 words). Compact
+3,529 rules, 171,517 nodes, 26 colours; greedy 999 rules at 458,189 nodes. With named common sub-expressions:
+
+| budget | rules | rhs nodes | bytes |
+|---|---:|---:|---:|
+| ×2 | 1,098 | 342,699 | 1,577,434 |
+| ×2.4 | 1,019 | 411,109 | 1,816,505 |
+| ×2.5 | 1,003 | 428,030 | 1,877,649 |
+| **×2.56** | **994** | **438,487** | **1,905,775** |
+| ×3 | 951 | 512,816 | 2,183,116 |
+
+`out/anchors-role-y11-o4-w128-n994.peg.gz`: **994 rules, 438,487 rhs nodes, 1,905,775 bytes** (§3d: 996 rules at 472,260 nodes,
+2,033,703 bytes; at equal budgets −21 to −48 rules). Checks: no undefined reference; re-parsed = oracle on all words ≤ 9; the
+Rust runner gives 0 mismatches on the 168 words of §3c and the 799 words of every length 3–200. Still an observation, not a proof.
+
+**Not dramatic.** Each saved layer is paid back by the branch logic it needs: a merge adds nested reads, and a read costs a
+dispatch over every site its pointer may reach. The per-layer cost of branching, not the number of steps, is now the limit.
+
+| grammar | fewer than 1,000 rules at | bytes |
+|---|---|---:|
+| §3b (13/4, W₀ 64) | 724,780 nodes (×4.40) | 2,984,353 |
+| §3c (12/4 + unfold + `tmp`, W₀ 128, naming) | 531,531 nodes (×3.5) | 2,283,029 |
+| §3d (+ mirrored fallback) | 472,260 nodes (×2.7) | 2,033,703 |
+| **§3e (11/4 + `lgap` + U, β 13/32)** | **438,487 nodes (×2.56)** | **1,905,775** |
+
+Reproduce (from `research/`):
+
+```sh
+sbt "run lps-code export role 11 4 128 C.peg noacc fuse compact endent endonce star unfold tmp mirror lgap merge2 noG noR beta=13/32" \
+    "run peg-cse-improve C.peg 2.56 65536 60 1000 10 out.peg out.json"
+sbt "run step-bigrams 12 4 128 every 300 noacc fuse compact endent endonce unfold tmp beta=7/16"   # D (add lgap for E)
+```
 
 ## 4. The handoff's other routes, re-evaluated with these numbers
 

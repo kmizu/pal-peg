@@ -272,3 +272,14 @@ grammar goes below 1,000 rules at ×2.7 (472,260 nodes, 2.03 MB), inside the ban
 threshold from the greedy run (the price of the next elimination) named too little and ended no lower: a naming also cheapens
 the later elimination of the rules around it. Old 3 passes only with young 13 at W₀ 256, which costs more than it saves; young 12
 with old 3 fails at the first B life whatever W₀.
+
+## 14. Seven ideas for a dramatic cut (2026-09-27, `STRATEGY.md` §3e)
+
+A young layer is worth about a quarter of the nodes at 999 rules, so the ideas aimed at fewer layers or cheaper layers. Two steps
+per slot copied the first step's register expressions into the second (worse); colours by use and a larger RHS cap changed
+nothing. Classifying the young steps showed reversal chains and the unfolding of GNODEs whose gap is empty; an entry with an empty
+gap now gets an LNODE (`lgap`, free). Merging a pop with the pop that always follows it saves a layer but adds nested reads, and a
+read costs a dispatch over every site its pointer may reach, so the merges cost about what the layer is worth. With balanced
+anchors (β 13/32) young 11 needs only the cheapest merge: 994 rules at 438,487 nodes (×2.56), 1.91 MB, about 7 % below §3d.
+Not dramatic: the per-layer cost of branching, not the number of steps, is the limit now. A literal `False` guard used to be
+compiled into rules; options now add branches only when they are on.

@@ -40,3 +40,29 @@ Compact 3,739 rules, 152,266 rhs nodes, 28 colours; greedy 999 rules at 591,546 
 | 0.05 | 1,404 | 1,215 | 1,110 | 887,968 |
 | 0.2 | 1,580 | 1,371 | 1,186 | 1,014,965 |
 | 0.5 | 1,737 | 1,478 | 1,316 | 1,296,427 |
+
+## §3e (2026-09-27): the seven ideas, measured
+
+999 rules reached at (greedy `lps-inline-curve`, β 7/16, W₀ 128, A + unfold + `tmp` unless stated):
+
+| machine | rhs nodes at 999 |
+|---|---:|
+| young 12 / old 4 | 528,756 |
+| young 11 / old 4 (rates fail) | 398,492 |
+| young 10 / old 4 (rates fail) | 301,314 |
+| 12/4 + `pairs` | 952,966 |
+| 12/4 + `recolour` | 528,984 |
+| 11/4 + `lgap` + R1 + U (passes the seed-21 set) | 520,517 |
+| 11/4 + `lgap` + all of `merge2` | 865,767 |
+| 11/4 + `lgap` + `merge2` + `merge3` | 1.49 M |
+| **11/4 + `lgap` + U, β 13/32** | **458,189** |
+
+The adopted grammar (11/4 + `lgap` + U, β 13/32, W₀ 128, mirrored fallback) with `peg-cse-improve`:
+
+| budget | rules | rhs nodes | bytes |
+|---|---:|---:|---:|
+| ×2 | 1,098 | 342,699 | 1,577,434 |
+| ×2.4 | 1,019 | 411,109 | 1,816,505 |
+| ×2.5 | 1,003 | 428,030 | 1,877,649 |
+| **×2.56** | **994** | **438,487** | **1,905,775** |
+| ×3 | 951 | 512,816 | 2,183,116 |

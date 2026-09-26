@@ -30,8 +30,10 @@ object LpsCode {
     * up: no machine cell born before tick `minBirth`, which must be >= the colour count) from that length on.
     * PAL3 with warmup W0: fallbackBelow = 2 W0, minBirth = W0; OverlapPal with minAnchor W0: 3 W0 / 2 and W0. */
   /** `mirrorFallback`: the fallback by mirrored pairs (`SiteCode.fallbackMirror`) instead of the `Pal_k` family */
+  /** `recolour` (STRATEGY.md §3e): after a first compilation, renumber the colours by the number of references to their
+    * `Tail_c` (the most referenced colour gets the shortest code), then compile again */
   final case class Options(fallbackBelow: Option[Int] = None, minBirth: Int = 0, dispatch: Dispatch = Direct, codeByStar: Boolean = false,
-                           mirrorFallback: Boolean = false)
+                           mirrorFallback: Boolean = false, recolour: Boolean = false)
   final case class Result(grammar: Grammar, meta: Map[String, RuleMeta], coloring: SiteCode.Coloring, domains: Vector[Set[Site]])
 
   final class Compiler(m: Machine, hints: Map[String, Inp], colour: Site => Int, colourCount: Int, opts: Options) {
@@ -344,7 +346,14 @@ object LpsCode {
       val next = (hints.keySet ++ c.inpOut.keySet).map(k => k -> (hints.getOrElse(k, Set.empty[Char]) ++ c.inpOut.getOrElse(k, Set.empty[Char]))).toMap
       if (next == hints) { done = true; domains = c.domains } else { hints = next }
     }
-    val coloring = SiteCode.color(domains)
+    val coloring0 = SiteCode.color(domains)
+    val coloring = if (!opts.recolour) { coloring0 } else {
+      val g0 = new Compiler(m, hints, coloring0.apply, math.max(coloring0.count, 1), opts).grammar()
+      val refs = g0.rules.flatMap { case (_, e) => PegBudgetInline.occurrences(e).toVector }.groupMapReduce(_._1)(_._2.toLong)(_ + _)
+      val byUse = (0 until coloring0.count).sortBy(i => (-refs.getOrElse(SiteCode.tail(i), 0L), i))
+      val perm = byUse.zipWithIndex.toMap   // old colour -> new colour
+      SiteCode.Coloring(coloring0.colors.map { case (site, col) => site -> perm(col) }, coloring0.count)
+    }
     val c = new Compiler(m, hints, coloring.apply, math.max(coloring.count, 1), opts)
     val g = c.grammar()
     require(c.domains.toSet == domains.toSet, "the domains changed with the colouring")

@@ -93,7 +93,7 @@ class AnchorSchedSuite extends munit.FunSuite {
 
   test("every counterexample is a palindrome, fails its configuration (the POOLS machine of main included), and the chosen machines answer it") {
     val cs = counterexamples
-    assertEquals(cs.size, 11)
+    assertEquals(cs.size, 15)
     val fin = chosen
     val fin3c = chosen3c
     val b1332 = OverlapPal.Sched(13, 32)
@@ -108,7 +108,13 @@ class AnchorSchedSuite extends munit.FunSuite {
       "role 12/4 A unfold, beta 7/16, W0 64" -> (() => RolePal.machine(12, 4, 64, a.copy(unfold = true, sched = b716))),
       "role 13/3 A unfold, beta 7/16, W0 128" -> (() => RolePal.machine(13, 3, 128, a.copy(unfold = true, sched = b716))),
       "role 12/3 A unfold, beta 13/32, W0 128" -> (() => RolePal.machine(12, 3, 128, a.copy(unfold = true, sched = b1332))),
-      "role 11/4 A unfold, beta 13/32, W0 128" -> (() => RolePal.machine(11, 4, 128, a.copy(unfold = true, sched = b1332))))
+      "role 11/4 A unfold, beta 13/32, W0 128" -> (() => RolePal.machine(11, 4, 128, a.copy(unfold = true, sched = b1332))),
+      "role 11/4 A unfold tmp lgap, beta 13/32, W0 128" -> (() => RolePal.machine(11, 4, 128, a.copy(unfold = true, mergeTmp = true, lgap = true, sched = b1332))),
+      "role 11/4 A unfold tmp lgap merge2 noR, beta 7/16, W0 128" ->
+        (() => RolePal.machine(11, 4, 128, a.copy(unfold = true, mergeTmp = true, lgap = true, merge2 = true, m2off = Set("R"), sched = b716))),
+      "role 12/3 A unfold tmp lgap, beta 7/16, W0 128" -> (() => RolePal.machine(12, 3, 128, a.copy(unfold = true, mergeTmp = true, lgap = true, sched = b716))),
+      "role 10/4 A unfold tmp lgap merge2, beta 7/16, W0 128" ->
+        (() => RolePal.machine(10, 4, 128, a.copy(unfold = true, mergeTmp = true, lgap = true, merge2 = true, sched = b716))))
     for ((cfg, w) <- cs) {
       assert(LpsPal.isPal(w), cfg)
       val key = cfg.takeWhile(_ != '(').trim
