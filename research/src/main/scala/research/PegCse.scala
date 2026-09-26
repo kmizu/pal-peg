@@ -101,5 +101,26 @@ object PegCse {
     }
     (g, trace.result())
   }
+
+  /** `improve` with the threshold taken from the greedy run itself: after the inliner has used the budget, name the best
+    * sub-expression only while its saving exceeds the cheapest next elimination (`PegBudgetInline.cheapest`), up to `k` per
+    * round, then inline again; stop when a round names nothing or does not lower the rule count */
+  def improveAdaptive(g0: Grammar, nodeBudget: Long, maxRhs: Int, k: Int, rounds: Int): (Grammar, Vector[(Int, Long, Long)]) = {
+    val opts = PegBudgetInline.Options(nodeBudget = nodeBudget, maxRhs = maxRhs)
+    var g = PegBudgetInline.inline(g0, opts).grammar
+    val trace = Vector.newBuilder[(Int, Long, Long)]   // (rules, nodes, the price of a rule)
+    var r = 0
+    var go = true
+    while (go && r < rounds) {
+      val price = PegBudgetInline.cheapest(g, maxRhs).getOrElse(Long.MaxValue)
+      trace += ((g.rules.size, g.size._2.toLong, price))
+      val (ge, n) = extractBest(g, k, price, s"Z${r}_")
+      val gi = PegBudgetInline.inline(ge, opts).grammar
+      if (n == 0 || gi.rules.size > g.rules.size || (gi.rules.size == g.rules.size && gi.size._2 >= g.size._2)) { go = false } else { g = gi }
+      r += 1
+    }
+    trace += ((g.rules.size, g.size._2.toLong, -1L))
+    (g, trace.result())
+  }
 }
 

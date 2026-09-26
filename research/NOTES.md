@@ -262,3 +262,13 @@ sub-expressions after inlining (`PegCse`), which the remove-only inliner cannot 
 (better per multiple, worse in absolute nodes). The first `tmp` grammars referenced undefined rules — a register domain with
 two tags got dispatch arms for always-null fields — which only the Rust runner noticed; the compiler no longer emits those arms
 and a test checks that every referenced rule is defined.
+
+## 13. The fallback, naming in the loop, the old pool (2026-09-27, `STRATEGY.md` §3d)
+
+The bounded fallback was the cheapest lever left: `Pal_k` references `Pal_{k-2}` twice, so its chain cannot be inlined and
+42 of its rules survived at W₀ 128. Checking mirrored pairs with EOF-anchored skips (`Mir_j`: the letter at j against the letter
+followed by exactly j letters) needs one reference per step; the chain inlines completely into the start rule. With it the
+grammar goes below 1,000 rules at ×2.7 (472,260 nodes, 2.03 MB), inside the band the handoff prefers. Taking the naming
+threshold from the greedy run (the price of the next elimination) named too little and ended no lower: a naming also cheapens
+the later elimination of the rules around it. Old 3 passes only with young 13 at W₀ 256, which costs more than it saves; young 12
+with old 3 fails at the first B life whatever W₀.

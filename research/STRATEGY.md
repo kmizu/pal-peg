@@ -14,8 +14,8 @@ inliner gives 1,377 (×2 nodes), 1,194 (×3), 1,120 (×4), **999 (×9.75, 1,945,
 **Correction (§3b): that machine, and both 999-rule grammars made from it, answer false on a 79-letter palindrome.** The
 grammar that replaces them (13/4, β 7/16, W₀ 64): 999 rules at ×4.40, 2,984,353 bytes; ×2 1,257, ×3 1,090, ×4 1,018.
 
-**Current best (§3c):** 12/4 + unfold + `tmp`, W₀ 128, with common sub-expressions named: 998 rules at 531,531 rhs nodes
-(×3.5), 2,283,029 bytes; ×2 1,235, ×3 1,040, ×4 978.
+**Current best (§3d):** 12/4 + unfold + `tmp`, W₀ 128, mirrored fallback, common sub-expressions named: 996 rules at 472,260
+rhs nodes (×2.7), 2,033,703 bytes; ×2 1,146, ×3 968, ×4 910.
 
 ## 1. Diagnosis: what survives the inliner, and why (measured)
 
@@ -364,6 +364,58 @@ above. Still an observation, not a proof.
 
 Next levers: the fallback (42 rules for n < 184; a bounded-length palindrome grammar can surely be smaller), naming inside
 the greedy loop instead of in rounds, and the old pool (4 is still the floor).
+
+## 3d. The three next levers of §3c (measured, 2026-09-27)
+
+### The fallback: mirrored pairs instead of the `Pal_k` family — adopted
+
+The fallback answers the lengths below the first machine answer (184 at W₀ 128). `SiteCode.fallbackBelow` builds
+`Pal_k = "a" Pal_{k-2} "a" / "b" Pal_{k-2} "b"`: two references to `Pal_{k-2}`, so inlining a chain doubles its size and the
+greedy keeps rules (42 of them in the §3c grammar, 10 at W₀ 64). `SiteCode.fallbackMirror` (`lps-code … mirror`) checks
+mirrored pairs instead: `Mir_j` accepts when at most j + 1 letters remain, otherwise matches the letter at j against the letter
+followed by exactly j letters (`(!T .)* &T`, T = exactly j + 1 letters then EOF, skips to it) and continues with `Mir_{j+1}` —
+one reference per step, so the whole chain inlines into O(limit²) nodes. `SiteCodeSuite`: for limits 2, 3, 8, 13, 16 it accepts
+exactly the palindromes shorter than the limit and agrees with the `Pal_k` family on all words ≤ limit + 2. On the §3c machine
+the compact grammar goes from 3,739 rules / 152,266 nodes to 3,648 / 175,153, no `Mir` or `Pal` rule survives the inliner,
+and the greedy alone reaches 999 rules at 528,756 nodes (with `Pal_k`: 591,546).
+
+### Naming inside the greedy loop — not better
+
+`PegCse.improveAdaptive` (`peg-cse-adaptive`) takes each round's threshold from the greedy run itself: the price of the next
+elimination (`PegBudgetInline.cheapest`), 735–2,975 nodes along the curve. It names fewer sub-expressions than a fixed
+threshold of 700–1,300 and ends no lower: on the mirrored grammar ×3 977 against 968 (fixed), ×3.5 938 against 939. A naming
+below the price still pays, because it also shrinks the rules that contain the sub-expression and so the price of eliminating
+them later. The fixed-threshold rounds stay.
+
+### The old pool below 4 — possible, not useful
+
+| W₀ | 12/3 + unfold | 13/3 + unfold | 11/4 + unfold |
+|---|---|---|---|
+| 128 | FAIL n 349 (β 13/32) | FAIL n 361 (h 184) | FAIL n 257 / 209 |
+| 256 | FAIL n 655 (h 368) | **PASS** (every ≤ 1,025) | FAIL n 512 (h 368) |
+
+Young 12 with old 3 fails at the first B life whatever W₀ (h 184 at 128, h 368 at 256): raising W₀ only moves the failure to
+the next first B life. 13/3 passes at W₀ 256, but it has as many layers as 12/4 with a dearer young one and a fallback for every
+n < 368: its compact grammar is 3,777 rules / 247,391 nodes and the greedy reaches 999 rules only at 631,159 nodes (12/4 at
+W₀ 128 with the mirrored fallback: 528,756). Old 4 stays.
+
+### The grammar of §3d
+
+`out/anchors-role-y12-o4-w128-mirror-n996.peg.gz`: the §3c machine (12/4, A + unfold + `tmp`, β 7/16, W₀ 128) with the mirrored
+fallback, greedy inlining and named common sub-expressions (threshold 1,100) at ×2.7 of its compact grammar
+(`out/anchors-role-y12-o4-w128-mirror.peg.gz`): **996 rules, 472,260 rhs nodes, max RHS 25,613 (the start rule holds the
+whole fallback), 2,033,703 bytes, 141,261 bytes gzipped** (`metrics/anchors-role-y12-o4-w128-mirror-n996.json`, sha256 of the
+`.peg` `fe15be0b…`). The curve with naming: ×2 1,146, ×2.5 1,040, ×2.7 996, ×3 968, ×4 910 — **N < 1,000 inside the ×2–×3
+band the handoff prefers.** Checks: no undefined reference; re-parsed, it equals the oracle on all words ≤ 9; the Rust runner
+gives 0 mismatches on the 168 words of §3c (24–9,000 letters) and on 792 more words of every length 3–200 (a random palindrome,
+a flip of it, the Thue–Morse palindrome and a flip, at each length: the fallback and its boundary at 184). The machine is the
+§3c one, so its rates stand. Still an observation, not a proof.
+
+| grammar | fewer than 1,000 rules at | bytes |
+|---|---|---:|
+| §3b (13/4, W₀ 64) | 724,780 nodes (×4.40) | 2,984,353 |
+| §3c (12/4 + unfold + `tmp`, W₀ 128, naming) | 531,531 nodes (×3.5) | 2,283,029 |
+| **§3d (+ mirrored fallback)** | **472,260 nodes (×2.7)** | **2,033,703** |
 
 ## 4. The handoff's other routes, re-evaluated with these numbers
 

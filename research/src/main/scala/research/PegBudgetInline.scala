@@ -140,4 +140,19 @@ object PegBudgetInline {
     }
     Result(new Grammar(order.filter(live).map(n => (n, body(n)))), gone.result(), totalNodes, totalBytes, trace.result())
   }
+
+  /** the smallest node increase of one more elimination, ignoring the node budget (the price of a rule at this point of the
+    * greedy run; `PegCse.improveAdaptive` names a sub-expression only when it saves more than this) */
+  def cheapest(g: Grammar, maxRhs: Int = Int.MaxValue, protect: Set[String] = Set()): Option[Long] = {
+    val occ = g.rules.map { case (n, e) => n -> occurrences(e) }.toMap
+    val size = g.rules.map { case (n, e) => n -> Expr.size(e).toLong }.toMap
+    val uses = mutable.HashMap.empty[String, Long]
+    val users = mutable.HashMap.empty[String, List[String]]
+    for ((n, m) <- occ; (t, k) <- m) { uses(t) = uses.getOrElse(t, 0L) + k; users(t) = n :: users.getOrElse(t, Nil) }
+    g.rules.iterator.map(_._1).filter { r =>
+      r != g.start && !protect(r) && !occ(r).contains(r) && uses.getOrElse(r, 0L) >= 1 &&
+        users.getOrElse(r, Nil).forall(q => size(q) + occ(q)(r) * (size(r) - 1) <= maxRhs)
+    }.map(r => uses(r) * (size(r) - 1) - size(r)).minOption
+  }
 }
+

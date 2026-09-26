@@ -59,12 +59,13 @@ class LpsCodeSuite extends munit.FunSuite {
     val a = RolePal.Options(youngReport = false, fuseIn = true, compact = true, endAsEntry = true, endOnce = true)
     val variants = Vector("A" -> a, "tmp" -> a.copy(mergeTmp = true), "rk" -> a.copy(sharedRK = true), "rk p3" -> a.copy(sharedRK = true, rearInP3 = true),
       "unfold" -> a.copy(unfold = true), "unfold tmp" -> a.copy(unfold = true, mergeTmp = true), "tmp beta 7/16" -> a.copy(mergeTmp = true, sched = OverlapPal.Sched(7, 16)))
-    for ((name, o) <- variants; dispatch <- Vector(LpsCode.Direct, LpsCode.Trie)) {
+    for ((name, o) <- variants; dispatch <- Vector(LpsCode.Direct, LpsCode.Trie); mirror <- Vector(false, true)) {
       val w0 = if (o.sched.half) { 16 } else { 32 }
-      val g = LpsCode.compileMeta(RolePal.machine(2, 2, w0, o), LpsCode.Options(fallbackBelow = Some(OverlapPal.firstAnswer(w0, o.sched)), minBirth = w0, dispatch = dispatch)).grammar
+      val g = LpsCode.compileMeta(RolePal.machine(2, 2, w0, o), LpsCode.Options(fallbackBelow = Some(OverlapPal.firstAnswer(w0, o.sched)), minBirth = w0,
+        dispatch = dispatch, mirrorFallback = mirror)).grammar
       val defined = g.rules.map(_._1).toSet
       val undefined = g.rules.flatMap { case (_, e) => PegBudgetInline.occurrences(e).keys }.toSet -- defined
-      assert(undefined.isEmpty, s"$name $dispatch: undefined ${undefined.toVector.sorted.take(5)}")
+      assert(undefined.isEmpty, s"$name $dispatch mirror=$mirror: undefined ${undefined.toVector.sorted.take(5)}")
     }
   }
 }

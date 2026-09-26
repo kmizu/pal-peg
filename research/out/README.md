@@ -1,6 +1,13 @@
 # Generated grammars
 
-- `anchors-role-y12-o4-w128-n998.peg.gz` — **the current best (2026-09-27, `STRATEGY.md` §3c): 998 rules.** Role machine
+- `anchors-role-y12-o4-w128-mirror-n996.peg.gz` — **the current best (2026-09-27, `STRATEGY.md` §3d): 996 rules.** The §3c
+  machine with the mirrored fallback (`lps-code … mirror`), greedy inlining and named common sub-expressions at ×2.7:
+  472,260 rhs nodes, max rhs 25,613, 2,033,703 bytes (141,261 gzipped). No undefined reference; re-parsed = oracle on all words ≤ 9;
+  Rust runner 0 mismatches on 168 words of 24–9,000 letters and 792 words of every length 3–200. Rates: those of §3c.
+  `metrics/anchors-role-y12-o4-w128-mirror-n996.json`. Reproduce: `run lps-code export role 12 4 128 C.peg noacc fuse compact
+  endent endonce star unfold tmp mirror beta=7/16` then `run peg-cse-improve C.peg 2.7 65536 60 1100 10 out.peg out.json`.
+- `anchors-role-y12-o4-w128-mirror.peg.gz` — the same before inlining: 3,648 rules, 175,153 rhs nodes.
+- `anchors-role-y12-o4-w128-n998.peg.gz` — the best of §3c (2026-09-27, `STRATEGY.md` §3c): 998 rules. Role machine
   12/4, configuration A + `unfold` + `tmp`, `Code` by star, β = 7/16, W₀ = 128 (first machine answer 184), greedy inlining and
   named common sub-expressions (`peg-cse-improve`) at ×3.5: 531,531 rhs nodes, max rhs 7,035, 2,283,029 bytes (149,481 gzipped).
   No undefined reference; re-parsed = oracle on all words ≤ 9; Rust runner on 168 words of 24–9,000 letters: 0 mismatches.

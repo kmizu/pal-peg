@@ -4,7 +4,7 @@ Scaffolding for the search for a *small* ordinary PEG (a few hundred rules) reco
 palindromes. Nothing here changes the proof in `../proof`; the grammars here are experiments.
 
 **Current approach and status: [`APPROACH.md`](APPROACH.md)** (the slot-scheduled pointer machines
-`Lps*.scala`). Next steps: [`STRATEGY.md`](STRATEGY.md) ([日本語](STRATEGY.ja.md)) — what the 999 rules are made of, the ranked levers, and §3b: the correction of the POOLS grammar; §3c: the current best grammar (12/4 + unfold + `tmp`, W₀ 128, named sub-expressions: 998 rules, 2.28 MB).
+`Lps*.scala`). Next steps: [`STRATEGY.md`](STRATEGY.md) ([日本語](STRATEGY.ja.md)) — what the 999 rules are made of, the ranked levers, and §3b: the correction of the POOLS grammar; §3c–§3d: the current best grammar (12/4 + unfold + `tmp`, W₀ 128, mirrored fallback, named sub-expressions: 996 rules at ×2.7, 2.03 MB).
 Latest result: [`POOLS.md`](POOLS.md) ([日本語](POOLS.ja.md)) — the role machine at 15/4, 4,216 rules compact and
 **999 rules after budgeted inlining** (8.0 MB); before it [`UNDER1000.md`](UNDER1000.md) (5,902 rules, wrong on one
 palindrome of 128 letters, corrected there) and [`BREAKTHROUGH.md`](BREAKTHROUGH.md) (8,336). The measurements in order: [`NOTES.md`](NOTES.md).

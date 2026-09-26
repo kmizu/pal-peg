@@ -29,7 +29,9 @@ object LpsCode {
   /** `fallbackBelow`: the PEG answers the lengths below it with the bounded palindrome grammar, the machine (warmed
     * up: no machine cell born before tick `minBirth`, which must be >= the colour count) from that length on.
     * PAL3 with warmup W0: fallbackBelow = 2 W0, minBirth = W0; OverlapPal with minAnchor W0: 3 W0 / 2 and W0. */
-  final case class Options(fallbackBelow: Option[Int] = None, minBirth: Int = 0, dispatch: Dispatch = Direct, codeByStar: Boolean = false)
+  /** `mirrorFallback`: the fallback by mirrored pairs (`SiteCode.fallbackMirror`) instead of the `Pal_k` family */
+  final case class Options(fallbackBelow: Option[Int] = None, minBirth: Int = 0, dispatch: Dispatch = Direct, codeByStar: Boolean = false,
+                           mirrorFallback: Boolean = false)
   final case class Result(grammar: Grammar, meta: Map[String, RuleMeta], coloring: SiteCode.Coloring, domains: Vector[Set[Site]])
 
   final class Compiler(m: Machine, hints: Map[String, Inp], colour: Site => Int, colourCount: Int, opts: Options) {
@@ -293,7 +295,7 @@ object LpsCode {
       curSlot = "helper"
       SiteCode.helpers(colourCount, opts.codeByStar).foreach(emit)
       curSlot = "fallback"
-      opts.fallbackBelow.foreach(limit => SiteCode.fallbackBelow(limit).foreach(emit))
+      opts.fallbackBelow.foreach(limit => (if (opts.mirrorFallback) { SiteCode.fallbackMirror(limit) } else { SiteCode.fallbackBelow(limit) }).foreach(emit))
       curSlot = "-"
       val prev: Expr = and(AnyChar, look(AnyChar))
       for ((r, kinds) <- m.regs) {

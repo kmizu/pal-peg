@@ -51,4 +51,20 @@ class PegCseSuite extends munit.FunSuite {
       assertEquals(after.rule(h.start, 0), before.rule(g0.start, 0), s"'$w'")
     }
   }
+
+  test("the price of a rule is the delta of the greedy's next elimination, and improveAdaptive does not raise the rule count") {
+    val m = RolePal.machine(1, 1, 8, RolePal.Options(youngReport = false, fuseIn = true, compact = true, mergeTmp = true))
+    val opts = LpsCode.Options(fallbackBelow = Some(OverlapPal.firstAnswer(8)), minBirth = 8, mirrorFallback = true)
+    val g0 = PegOptimize.compact(LpsCode.compileMeta(m, opts).grammar).grammar
+    val budget = PegMetrics.of(g0, PegMetrics.componentOfName).rhsNodes * 3
+    val plain = PegBudgetInline.inline(g0, PegBudgetInline.Options(nodeBudget = budget)).grammar
+    // one more elimination with an unlimited budget costs exactly the price
+    val price = PegBudgetInline.cheapest(plain).get
+    val one = PegBudgetInline.inline(plain, PegBudgetInline.Options(nodeBudget = Long.MaxValue, maxEliminations = 1))
+    assertEquals(one.nodes - plain.size._2.toLong, price)
+    val (h, _) = PegCse.improveAdaptive(g0, budget, Int.MaxValue, 10, 3)
+    assert(h.rules.size <= plain.rules.size, s"${h.rules.size} > ${plain.rules.size}")
+    for (w <- Exhaust.words(9, "ab")) { assertEquals(h.matcher(w).rule(h.start, 0), g0.matcher(w).rule(g0.start, 0), s"'$w'") }
+  }
 }
+
