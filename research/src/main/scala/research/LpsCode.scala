@@ -160,7 +160,8 @@ object LpsCode {
         val rest = and(remaining*)
         def sel(f: P => Expr): Expr = or((ms.zip(rs).map { case (h, (_, pa)) => and(look(h), f(pa)) } :+ and(look(rest), f(pd)))*)
         P(sel(_.ext), sel(_.isLetter), sel(_.isSep), sel(_.code), kinds, rs.map(_._2.inp).foldLeft(pd.inp)(_ ++ _))
-      case Fld(MadeAt(i), f) if m.sitesAt(t).indices.contains(i) => cellFieldP(t, i, f)
+      case Fld(MadeAt(i), f) if m.sitesAt(t).indices.contains(i) =>
+        if (fieldKindsAt(t, i, f).isEmpty) { P(FalseE, FalseE, FalseE, FalseE, Set(), Set()) } else { cellFieldP(t, i, f) }   // an always-null field
       case Fld(x, f) =>
         val px = compE(x, t)
         val alts = Vector.newBuilder[(Expr, P)]
@@ -172,7 +173,9 @@ object LpsCode {
         val pxTags: Set[Int] = px.kinds.collect { case KTag(tag) => tag }
         val siteAlts: Vector[(Site, Expr, P)] = px.sites.flatMap { case x @ (l, i) =>
           val tags = m.tagsAt(l, i).toSet
-          if (tags.intersect(pxTags).isEmpty) { None }
+          // a site whose field f can hold no pointer (empty schema kinds: the field is always null) has no field rule; the
+          // read is null there, which is what no matching arm gives (a register domain that unites two tags, e.g. `tmp`)
+          if (tags.intersect(pxTags).isEmpty || fieldKindsAt(l, i, f).isEmpty) { None }
           else {
             val atCell = if (tags.size == 1) { TrueE } else { or(tags.intersect(pxTags).toVector.sorted.map(tag => tagTest(l, i, tag))*) }
             Some((x, look(atCell), cellFieldP(l, i, f)))

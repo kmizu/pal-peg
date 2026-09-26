@@ -252,3 +252,13 @@ curve 87–111 at ×2–×4. A new every-length family (the runner's words at ev
 life's 16-tick window. The replacement (13/4, β 7/16, W₀ 64, which keeps `endonce` safe) passes three seeds and every length
 ≤ 2,049: 999 rules at 2.98 MB, ×4 1,018. `unfold` (a mismatch unfolds its own gap) is implemented but its gains (old 3,
 young 12) do not survive the every-length family.
+
+## 12. Other angles (2026-09-27, `STRATEGY.md` §3c)
+
+Three angles moved the curve: `tmp` (rv/ks merged), free now that W₀ is 64; W₀ 128, which puts the short early lives — every
+failure so far — into the bounded fallback, so that 12/4 with `unfold` passes every test of §3b; and naming common
+sub-expressions after inlining (`PegCse`), which the remove-only inliner cannot do. Together: 998 rules at 531,531 rhs nodes,
+2.28 MB (§3b: 724,780, 2.98 MB). Two did not: a look-ahead priority for the inliner (worse at every λ) and the `trie` dispatch
+(better per multiple, worse in absolute nodes). The first `tmp` grammars referenced undefined rules — a register domain with
+two tags got dispatch arms for always-null fields — which only the Rust runner noticed; the compiler no longer emits those arms
+and a test checks that every referenced rule is defined.

@@ -19,11 +19,14 @@ object PegBudgetInline {
   sealed trait Priority
   case object Nodes extends Priority
   case object Bytes extends Priority
+  /** the node delta plus `lambda` times the growth this elimination adds to the future elimination of every user q:
+    * occ(q, r) (s_r − 1) (u_q − 1) (STRATEGY.md §3c, a look-ahead against the myopic order) */
+  final case class Lookahead(lambda: Double) extends Priority
 
   /** `nodeBudget`/`byteBudget`: bounds on the grammar totals; `maxRhs`: bound on every right-hand side after a
     * substitution; `protect`: never eliminated (the start rule never is) */
   final case class Options(nodeBudget: Long, byteBudget: Long = Long.MaxValue, maxRhs: Int = Int.MaxValue,
-                           priority: Priority = Nodes, protect: Set[String] = Set())
+                           priority: Priority = Nodes, protect: Set[String] = Set(), maxEliminations: Int = Int.MaxValue)
   /** `trace`: after each elimination, (rules left, total rhs nodes, byte estimate). With a fixed `maxRhs` the eliminations
     * under a smaller node budget are a prefix of those under a larger one (the cheapest candidate is taken first, and if it
     * does not fit, no candidate does), so one run with the largest budget gives the whole N-versus-nodes curve. */
@@ -82,9 +85,13 @@ object PegBudgetInline {
       val l = utf8(r)
       (u * (s - 1) - s, u * (b + 2 - l) - (b + l + 5))
     }
+    def future(r: String): Long = {
+      val s = size(r)
+      users.get(r).map(_.iterator.map(q => occ(q).getOrElse(r, 0).toLong * (s - 1) * math.max(0L, uses(q) - 1)).sum).getOrElse(0L)
+    }
     def key(r: String): (Long, Long) = {
       val (dn, db) = deltas(r)
-      opts.priority match { case Nodes => (dn, db); case Bytes => (db, dn) }
+      opts.priority match { case Nodes => (dn, db); case Bytes => (db, dn); case Lookahead(l) => (dn + (l * future(r)).toLong, db) }
     }
     def less(a: (Long, Long), b: (Long, Long)): Boolean = a._1 < b._1 || (a._1 == b._1 && a._2 < b._2)
     def eligible(r: String): Boolean = r != start && !opts.protect(r) && !occ(r).contains(r) && uses(r) >= 1 && {
@@ -93,7 +100,8 @@ object PegBudgetInline {
         users(r).forall(q => size(q) + occ(q)(r) * (size(r) - 1) <= opts.maxRhs)
     }
     var go = true
-    while (go) {
+    var steps = 0
+    while (go && steps < opts.maxEliminations) {
       var best: Option[(String, (Long, Long))] = None
       for (r <- live if eligible(r)) {
         val k = key(r)
@@ -126,6 +134,7 @@ object PegBudgetInline {
           totalNodes += dn
           totalBytes += db
           gone += r
+          steps += 1
           trace += ((live.size, totalNodes, totalBytes))
       }
     }

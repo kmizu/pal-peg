@@ -88,26 +88,34 @@ class AnchorSchedSuite extends munit.FunSuite {
   /** the chosen machine of STRATEGY.md §3b: role 13/4, configuration A, beta 7/16, W0 64 */
   private def chosen: Lps.Machine = RolePal.machine(13, 4, 64, a.copy(sched = b716))
 
-  test("every counterexample is a palindrome, fails its configuration (the POOLS machine of main included), and the chosen machine answers it") {
+  /** the machine of §3c: role 12/4, configuration A, unfold, tmp, beta 7/16, W0 128 */
+  private def chosen3c: Lps.Machine = RolePal.machine(12, 4, 128, a.copy(sched = b716, unfold = true, mergeTmp = true))
+
+  test("every counterexample is a palindrome, fails its configuration (the POOLS machine of main included), and the chosen machines answer it") {
     val cs = counterexamples
-    assertEquals(cs.size, 8)
+    assertEquals(cs.size, 11)
     val fin = chosen
+    val fin3c = chosen3c
     val b1332 = OverlapPal.Sched(13, 32)
+    val failing: Map[String, () => Lps.Machine] = Map(
+      "role 15/4 A, beta 1/2, W0 32" -> (() => RolePal.machine(15, 4, 32, a)),
+      "role 13/4 A, beta 7/16, W0 32" -> (() => RolePal.machine(13, 4, 32, a.copy(sched = b716))),
+      "role 13/3 A unfold, beta 7/16, W0 32" -> (() => RolePal.machine(13, 3, 32, a.copy(unfold = true, sched = b716))),
+      "role 13/3 A unfold no-endonce, beta 7/16, W0 32" -> (() => RolePal.machine(13, 3, 32, a.copy(endOnce = false, unfold = true, sched = b716))),
+      "role 12/3 A unfold, beta 13/32, W0 64" -> (() => RolePal.machine(12, 3, 64, a.copy(unfold = true, sched = b1332))),
+      "model 12/12/6, beta 7/16, W0 32" -> (() => OverlapPal.machine(12, 12, 32, OverlapPal.GapCore, 6, b716)),
+      "model 13/13/4, beta 3/8, W0 32" -> (() => OverlapPal.machine(13, 13, 32, OverlapPal.GapCore, 4, b38)),
+      "role 12/4 A unfold, beta 7/16, W0 64" -> (() => RolePal.machine(12, 4, 64, a.copy(unfold = true, sched = b716))),
+      "role 13/3 A unfold, beta 7/16, W0 128" -> (() => RolePal.machine(13, 3, 128, a.copy(unfold = true, sched = b716))),
+      "role 12/3 A unfold, beta 13/32, W0 128" -> (() => RolePal.machine(12, 3, 128, a.copy(unfold = true, sched = b1332))),
+      "role 11/4 A unfold, beta 13/32, W0 128" -> (() => RolePal.machine(11, 4, 128, a.copy(unfold = true, sched = b1332))))
     for ((cfg, w) <- cs) {
       assert(LpsPal.isPal(w), cfg)
-      val failing: Lps.Machine = cfg match {
-        case c if c.startsWith("role 15/4 A, beta 1/2") => RolePal.machine(15, 4, 32, a)
-        case c if c.startsWith("role 13/4 A, beta 7/16") => RolePal.machine(13, 4, 32, a.copy(sched = b716))
-        case c if c.startsWith("role 13/3 A unfold no-endonce") => RolePal.machine(13, 3, 32, a.copy(endOnce = false, unfold = true, sched = b716))
-        case c if c.startsWith("role 13/3 A unfold") => RolePal.machine(13, 3, 32, a.copy(unfold = true, sched = b716))
-        case c if c.startsWith("role 12/4 A unfold, beta 7/16, W0 64") => RolePal.machine(12, 4, 64, a.copy(unfold = true, sched = b716))
-        case c if c.startsWith("role 12/3 A unfold, beta 13/32") => RolePal.machine(12, 3, 64, a.copy(unfold = true, sched = b1332))
-        case c if c.startsWith("model 12/12/6") => OverlapPal.machine(12, 12, 32, OverlapPal.GapCore, 6, b716)
-        case c if c.startsWith("model 13/13/4, beta 3/8") => OverlapPal.machine(13, 13, 32, OverlapPal.GapCore, 4, b38)
-        case c => fail(s"unknown configuration $c")
-      }
-      assert(!Lps.run(failing, w).outputs.last, s"$cfg should answer false on its counterexample")
-      assertEquals(Lps.run(fin, w).outputs, OverlapPal.expectedOutputs(64, w, b716), s"the chosen machine on the counterexample of $cfg")
+      val key = cfg.takeWhile(_ != '(').trim
+      val m = failing.getOrElse(key, fail(s"unknown configuration $cfg"))()
+      assert(!Lps.run(m, w).outputs.last, s"$cfg should answer false on its counterexample")
+      assertEquals(Lps.run(fin, w).outputs, OverlapPal.expectedOutputs(64, w, b716), s"the §3b machine on the counterexample of $cfg")
+      assertEquals(Lps.run(fin3c, w).outputs, OverlapPal.expectedOutputs(128, w, b716), s"the §3c machine on the counterexample of $cfg")
     }
   }
 
@@ -116,7 +124,19 @@ class AnchorSchedSuite extends munit.FunSuite {
     val ws = try { src.getLines().filterNot(_.startsWith("#")).map(l => l.split(" \\| ")(2).trim).toVector } finally { src.close() }
     assert(ws.size >= 5)
     val fin = chosen
-    for (w <- ws) { assertEquals(Lps.run(fin, w).outputs, OverlapPal.expectedOutputs(64, w, b716), s"'${w.take(40)}' (${w.length})") }
+    for (w <- ws) {
+      assertEquals(Lps.run(fin, w).outputs, OverlapPal.expectedOutputs(64, w, b716), s"'${w.take(40)}' (${w.length})")
+      assertEquals(Lps.run(chosen3c, w).outputs, OverlapPal.expectedOutputs(128, w, b716), s"§3c '${w.take(40)}' (${w.length})")
+    }
+  }
+
+  test("the §3c machine (role 12/4 A, unfold, tmp, beta 7/16, W0 128): the oracle's outputs and a clean strict role profile on the switch, adversarial and every-length words <= 300") {
+    val m = chosen3c
+    for (w <- OverlapProfile.switchWords(300, b716) ++ OverlapProfile.adversarialWords(300, b716).take(200) ++ OverlapProfile.everyLengthWords(300)) {
+      assertEquals(Lps.run(m, w).outputs, OverlapPal.expectedOutputs(128, w, b716), s"'${w.take(40)}' (${w.length})")
+      val pr = OverlapProfile.profile(m, w, 128, strict = true, layout = OverlapProfile.Roles, fusedIn = true, sc = b716)
+      assert(pr.violations.isEmpty, s"'${w.take(40)}' (${w.length}): ${pr.violations.take(3).mkString("; ")}")
+    }
   }
 
   test("the chosen machine (role 13/4 A, beta 7/16, W0 64): the oracle's outputs and a clean strict role profile on the switch, adversarial and every-length words <= 300") {
