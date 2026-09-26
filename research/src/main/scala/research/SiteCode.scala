@@ -82,4 +82,25 @@ object SiteCode {
     val long = ("Long", Seq(Vector.fill(limit)(AnyChar)))
     pals.toVector :+ short :+ long
   }
+
+  /** The palindromes shorter than `limit` by mirrored pairs (STRATEGY.md §3d): `Mir_j`, at position j, accepts when at most
+    * j + 1 letters remain (the middle is reached), otherwise checks the letter at j against the letter followed by exactly j
+    * letters — `(!T .)* &T` with T = exactly j + 1 letters then EOF skips to it — and continues at j + 1. One reference per step
+    * (`Pal_k` of `fallbackBelow` references `Pal_{k-2}` twice), so inlining the whole chain costs O(limit^2) nodes instead of
+    * keeping rules. `Short` also consumes the rest; `Long` is the same. */
+  def fallbackMirror(limit: Int): Vector[(String, Expr)] = {
+    require(limit >= 2)
+    val last = limit / 2
+    def dots(m: Int): Vector[Expr] = Vector.fill(m)(AnyChar)
+    def tail(c: Int): Expr = Seq(dots(c) :+ Not(AnyChar))                                        // exactly c letters, then EOF
+    def seek(c: Int): Expr = Seq(Vector(Star(Seq(Vector(Not(tail(c)), AnyChar))), And(tail(c))))   // to where exactly c letters remain
+    val mirs = (0 to last).map { j =>
+      val stop = Not(Seq(dots(j + 2)))
+      def pair(x: String): Expr = Seq(Vector(Lit(x), And(Seq(Vector(seek(j + 1), Lit(x))))))
+      val body = if (j == last) { stop } else { Choice(Vector(stop, Seq(Vector(Choice(Vector(pair("a"), pair("b"))), Ref(s"Mir_${j + 1}"))))) }
+      (s"Mir_$j", body)
+    }
+    mirs.toVector :+ ("Short" -> Seq(Vector(Not(Seq(dots(limit))), Ref("Mir_0"), Star(AnyChar)))) :+ ("Long" -> Seq(dots(limit)))
+  }
 }
+

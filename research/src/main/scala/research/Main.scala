@@ -374,6 +374,50 @@ object Main {
         val regs = st.regs.toVector.sortBy(_._1).filter { case (n, c) => c != null && re.findFirstIn(n).isDefined }.map { case (n, c) => s"$n=t${c.tag}@${c.layer}" }.mkString(" ")
         println(s"tick $tick $slot: $bits | $regs")
       }
+    case "peg-cse-improve" :: path :: factorS :: maxRhsS :: kS :: thresholdS :: roundsS :: rest =>
+      // peg-cse-improve <compact.peg> <factor> <maxRhs> <k> <threshold> <rounds> [out.peg]: the budgeted inliner at factor x
+      // the compacted input (as lps-inline-curve), then rounds of naming common sub-expressions and inlining again (PegCse)
+      val g = PegOptimize.compact(Grammar.parse(new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path)), "UTF-8"))).grammar
+      val base = PegMetrics.of(g, PegMetrics.componentOfName)
+      val budget = (base.rhsNodes * factorS.toDouble).toLong
+      val t0 = System.nanoTime()
+      val (g2, trace) = PegCse.improve(g, budget, maxRhsS.toInt, kS.toInt, thresholdS.toLong, roundsS.toInt)
+      val after = PegMetrics.of(g2, PegMetrics.componentOfName)
+      println(s"budget $budget (x$factorS of ${base.rhsNodes}); rounds (rules, nodes): ${trace.mkString(" ")}; " +
+        f"final ${after.rules} rules, ${after.rhsNodes} rhs nodes, ${after.renderedUtf8Bytes} bytes (${(System.nanoTime() - t0) / 1e9}%.0f s)")
+      rest.headOption.foreach { out => java.nio.file.Files.write(java.nio.file.Paths.get(out), g2.render.getBytes("UTF-8")) }
+      rest.lift(1).foreach { outJson =>
+        val rendered = g2.render
+        val sha = java.security.MessageDigest.getInstance("SHA-256").digest(rendered.getBytes("UTF-8")).map(b => f"${b & 0xff}%02x").mkString
+        val json = after.json(Seq("source_file" -> path, "pass" -> s"PegOptimize.compact+PegBudgetInline+PegCse (factor $factorS, k $kS, threshold $thresholdS)",
+          "node_budget" -> budget.toString, "max_rhs_budget" -> maxRhsS, "N_before" -> base.rules.toString, "rhs_nodes_before" -> base.rhsNodes.toString,
+          "rounds" -> trace.map { case (n, nodes) => s"$n/$nodes" }.mkString(" "), "sha256_uncompressed" -> sha))
+        java.nio.file.Files.write(java.nio.file.Paths.get(outJson), json.getBytes("UTF-8"))
+      }
+    case "peg-cse-adaptive" :: path :: factorS :: maxRhsS :: kS :: roundsS :: rest =>
+      // peg-cse-adaptive <compact.peg> <factor> <maxRhs> <k> <rounds> [out.peg out.json]: as peg-cse-improve, the threshold of each
+      // round being the price of the next elimination (PegCse.improveAdaptive)
+      val g = PegOptimize.compact(Grammar.parse(new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path)), "UTF-8"))).grammar
+      val base = PegMetrics.of(g, PegMetrics.componentOfName)
+      val budget = (base.rhsNodes * factorS.toDouble).toLong
+      val t0 = System.nanoTime()
+      val (g2, trace) = PegCse.improveAdaptive(g, budget, maxRhsS.toInt, kS.toInt, roundsS.toInt)
+      val after = PegMetrics.of(g2, PegMetrics.componentOfName)
+      println(s"budget $budget (x$factorS of ${base.rhsNodes}); rounds (rules, nodes, price): ${trace.mkString(" ")}; " +
+        f"final ${after.rules} rules, ${after.rhsNodes} rhs nodes, ${after.renderedUtf8Bytes} bytes (${(System.nanoTime() - t0) / 1e9}%.0f s)")
+      rest.headOption.foreach { out => java.nio.file.Files.write(java.nio.file.Paths.get(out), g2.render.getBytes("UTF-8")) }
+      rest.lift(1).foreach { outJson =>
+        val rendered = g2.render
+        val sha = java.security.MessageDigest.getInstance("SHA-256").digest(rendered.getBytes("UTF-8")).map(b => f"${b & 0xff}%02x").mkString
+        val json = after.json(Seq("source_file" -> path, "pass" -> s"PegOptimize.compact+PegBudgetInline+PegCse adaptive (factor $factorS, k $kS)",
+          "node_budget" -> budget.toString, "max_rhs_budget" -> maxRhsS, "N_before" -> base.rules.toString, "rhs_nodes_before" -> base.rhsNodes.toString,
+          "rounds" -> trace.map { case (n, nodes, p) => s"$n/$nodes/$p" }.mkString(" "), "sha256_uncompressed" -> sha))
+        java.nio.file.Files.write(java.nio.file.Paths.get(outJson), json.getBytes("UTF-8"))
+      }
+    case "peg-cse-probe" :: path :: topS :: thresholdS :: _ =>
+      // peg-cse-probe <grammar.peg> <top> <threshold>: the sub-expressions whose naming as a rule saves the most nodes (PegCse)
+      val g = Grammar.parse(new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path)), "UTF-8"))
+      println(PegCse.probe(g, topS.toInt, thresholdS.toLong))
     case "lps-inline-curve" :: path :: maxFactorS :: maxRhsS :: outMd :: rest =>
       // lps-inline-curve <in.peg> <maxFactor> <maxRhs> <out.md> [<N> <out.peg> <out.json>]: one greedy PegBudgetInline run
       // with the node budget maxFactor x the compacted input; the N reached at node factors 1 .. maxFactor; optionally the
@@ -383,7 +427,10 @@ object Main {
       val before = PegMetrics.of(g, PegMetrics.componentOfName)
       val maxRhs = maxRhsS.toInt
       val t0 = System.nanoTime()
-      val r = PegBudgetInline.inline(g, PegBudgetInline.Options(nodeBudget = (before.rhsNodes * maxFactorS.toDouble).toLong, maxRhs = maxRhs))
+      // an optional "la=<lambda>" after the other arguments: the look-ahead priority (PegBudgetInline.Lookahead)
+      val prio: PegBudgetInline.Priority = rest.collectFirst { case x if x.startsWith("la=") => PegBudgetInline.Lookahead(x.drop(3).toDouble) }.getOrElse(PegBudgetInline.Nodes)
+      val runOpts = PegBudgetInline.Options(nodeBudget = (before.rhsNodes * maxFactorS.toDouble).toLong, maxRhs = maxRhs, priority = prio)
+      val r = PegBudgetInline.inline(g, runOpts)
       val secs = (System.nanoTime() - t0) / 1e9
       val factors = Vector(1.0, 1.25, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0).filter(_ <= maxFactorS.toDouble)
       val rows = factors.map { f =>
@@ -402,15 +449,15 @@ object Main {
         case nS :: outPeg :: outJson :: _ =>
           val idx = r.trace.indexWhere(_._1 < nS.toInt)
           if (idx >= 0) {
-            val nodes = r.trace.take(idx + 1).map(_._2).max   // the budget under which the same greedy run reaches this point
-            val r2 = PegBudgetInline.inline(g, PegBudgetInline.Options(nodeBudget = nodes, maxRhs = maxRhs))
+            val nodes = r.trace(idx)._2
+            val r2 = PegBudgetInline.inline(g, runOpts.copy(maxEliminations = idx + 1))   // the same run stopped after idx + 1 eliminations
             val after = PegMetrics.of(r2.grammar, PegMetrics.componentOfName)
             val rendered = r2.grammar.render
             java.nio.file.Files.write(java.nio.file.Paths.get(outPeg), rendered.getBytes("UTF-8"))
             val sha = java.security.MessageDigest.getInstance("SHA-256").digest(rendered.getBytes("UTF-8")).map(b => f"${b & 0xff}%02x").mkString
             val commit = scala.sys.process.Process(Seq("git", "rev-parse", "--short", "HEAD")).!!.trim
             val json = after.json(Seq("source_file" -> path, "source_commit" -> commit, "pass" -> "PegOptimize.compact+PegBudgetInline",
-              "node_budget" -> nodes.toString, "max_rhs_budget" -> maxRhs.toString, "N_before" -> before.rules.toString,
+              "node_budget" -> nodes.toString, "max_rhs_budget" -> maxRhs.toString, "priority" -> prio.toString, "N_before" -> before.rules.toString,
               "rhs_nodes_before" -> before.rhsNodes.toString, "bytes_before" -> before.renderedUtf8Bytes.toString, "sha256_uncompressed" -> sha))
             java.nio.file.Files.write(java.nio.file.Paths.get(outJson), json.getBytes("UTF-8"))
             println(PegMetrics.markdownHeader); println(after.markdownRow(s"inline to N < $nS")); println(s"sha256 $sha")
@@ -501,7 +548,7 @@ object Main {
       // pal3: LpsWarmup.machine(m, f, W0), fallback below 2 W0; overlap: OverlapPal.machine(a, b, W0), fallback below 3 W0 / 2
       val trie = rest.contains("trie")
       // role options: noacc (no young acc), tmp (rv/ks merged), fuse (first old and young steps fused into IN)
-      val roleFlags = Set("noacc", "tmp", "fuse", "compact", "rk", "endent", "endonce", "p3", "star", "unfold")
+      val roleFlags = Set("noacc", "tmp", "fuse", "compact", "rk", "endent", "endonce", "p3", "star", "unfold", "mirror")
       val ropts = RolePal.Options(youngReport = !rest.contains("noacc"), mergeTmp = rest.contains("tmp"), fuseIn = rest.contains("fuse"), compact = rest.contains("compact"),
         sharedRK = rest.contains("rk"), endAsEntry = rest.contains("endent"), endOnce = rest.contains("endonce"), rearInP3 = rest.contains("p3"),
         sched = OverlapPal.schedArg(rest), unfold = rest.contains("unfold"))
@@ -512,7 +559,7 @@ object Main {
         if (kind == "role") { RolePal.machine(ms, fs, w0, ropts) } else if (isOverlap) { OverlapPal.machine(ms, fs, w0, coreKind) } else { LpsWarmup.machine(ms, fs, w0) }
       def firstAnswer(w0: Int): Int = if (isOverlap) { OverlapPal.firstAnswer(w0, ropts.sched) } else { LpsWarmup.firstAnswer(w0) }
       def opts(w0: Int) = LpsCode.Options(fallbackBelow = Some(firstAnswer(w0)), minBirth = w0, dispatch = if (trie) { LpsCode.Trie } else { LpsCode.Direct },
-        codeByStar = rest.contains("star"))
+        codeByStar = rest.contains("star"), mirrorFallback = rest.contains("mirror"))
       // the colours do not depend on the controller; the staged clock needs its smallest W0
       def colours(ms: Int, fs: Int): Int = LpsCode.compileMeta(mk(ms, fs, if (ropts.sched.half) { 2 } else { math.max(8, ropts.sched.minW0) })).coloring.count
       // W0: "auto" = the power of two >= colours; "auto3" = the smallest 3 * 2^k (k >= 2) >= colours (a base-3 clock, RolePal)

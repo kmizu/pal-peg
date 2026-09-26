@@ -130,4 +130,19 @@ class SiteCodeSuite extends munit.FunSuite {
       assert(!Expr.render(e).contains(n + " ") && !Expr.render(e).endsWith(n), s"$n must not refer to itself")
     }
   }
+
+  test("the mirrored fallback (STRATEGY.md §3d): Short accepts exactly the palindromes shorter than the limit, as the Pal_k family does (all words <= limit + 2)") {
+    import Expr.Ref
+    for (limit <- Vector(2, 3, 8, 13, 16)) {
+      val gm = new Grammar(Vector("S" -> Ref("Short")) ++ SiteCode.fallbackMirror(limit))
+      val gp = new Grammar(Vector("S" -> Ref("Short")) ++ SiteCode.fallbackBelow(limit))
+      for (w <- Exhaust.words(limit + 2, "ab")) {
+        val got = gm.matcher(w).rule("S", 0)
+        assertEquals(got.contains(w.length), w.length < limit && w == w.reverse, s"limit $limit '$w'")
+        assertEquals(got.isDefined, gp.matcher(w).rule("S", 0).isDefined, s"limit $limit '$w'")
+        assertEquals(gm.matcher(w).rule("Long", 0).isDefined, gp.matcher(w).rule("Long", 0).isDefined, s"limit $limit '$w'")
+      }
+    }
+  }
 }
+
