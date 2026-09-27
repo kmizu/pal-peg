@@ -304,3 +304,11 @@ the first answer: the gap matcher allocates in 77 % of its working steps — bui
 FIFO — because its structures are persistent, so eleven allocating young steps are the floor. W₀ 64 would save 5.7 % but is
 late on a 104-letter palindrome; young 10 with every merge passes but is larger. The next real cut needs a matcher whose pops
 do not allocate.
+
+## 17. Pops that store no cell (2026-09-27, `STRATEGY.md` §3h)
+
+A third of the young role's busy steps are builds and a third are pops that store a cell (reversals of the rear, unfold frames).
+A what-if machine whose N slots may run every pop showed the prize first: the cap would then pass with 8 allocating young layers
+of 13, about 15 % of the arms. And the pops cannot be freed in this model: cells point only to older cells and registers are
+bounded, so consuming the build-ordered rear oldest-first needs a cell per entry (or quadratic re-walks), and nested unfolds need
+a frame per level. The young role's branching is bound by the matcher's representation; §3f stays the best.

@@ -34,13 +34,14 @@ object RolePal {
                            sharedRK: Boolean = false, endAsEntry: Boolean = false, endOnce: Boolean = false, rearInP3: Boolean = false,
                            sched: OverlapPal.Sched = OverlapPal.Half, unfold: Boolean = false, pairs: Boolean = false, lgap: Boolean = false,
                            merge2: Boolean = false, merge3: Boolean = false, m2off: Set[String] = Set(), youngPattern: String = "",
-                           oldPattern: String = "") {
+                           oldPattern: String = "", freePops: Boolean = false) {
     require(!endOnce || compact, "endOnce needs the compact states")
     require(youngPattern.forall(c => c == 'A' || c == 'N'), "youngPattern: A (a full young step) or N (a non-allocating one) per YU slot")
     require(youngPattern.isEmpty || (fuseIn && compact && !pairs), "youngPattern needs fuseIn and the compact states, and no pairs")
     require(oldPattern.forall(c => c == 'A' || c == 'N'), "oldPattern: A (a full old step) or N (a non-allocating one) per OU slot")
     require(oldPattern.isEmpty || (fuseIn && compact && !pairs), "oldPattern needs fuseIn and the compact states, and no pairs")
   }
+  /** `freepops` among the role flags (STRATEGY.md §3h): the N slots act on every pop (a what-if; see `GapKmp.Core.stallPops`) */
   /** `ypat=<A/N letters>` among the role flags (STRATEGY.md §3g): one letter per young slot after IN, A = the full step (`YU`),
     * N = the non-allocating step (`YN`), which stalls on every branch that would store a new cell */
   def patternOf(flags: Iterable[String], key: String = "ypat"): String = flags.collectFirst { case f if f.startsWith(s"$key=") => f.drop(key.length + 1) }.getOrElse("")
@@ -57,15 +58,15 @@ object RolePal {
     def n(x: String): String = px + x
     val report: Boolean = !young || opts.youngReport
     val tags: GapKmp.Tags = tagsOf(opts)
-    private def mk(endStep: Boolean, noAlloc: Boolean = false) = new GapKmp.Core(M, tags, GapKmp.Feed(n("src"), n("rc"), n("pendF"), n("pendB"), n("pendN"), n("rev")),
+    private def mk(endStep: Boolean, noAlloc: Boolean = false, stallPops: Boolean = true) = new GapKmp.Core(M, tags, GapKmp.Feed(n("src"), n("rc"), n("pendF"), n("pendB"), n("pendN"), n("rev")),
       matchOnly = !young, report = report, mergeTmp = opts.mergeTmp, compact = opts.compact, sharedRK = opts.sharedRK,
       endAsEntry = opts.endAsEntry, endStep = endStep, unfold = opts.unfold, lgap = opts.lgap, merge2 = opts.merge2, merge3 = opts.merge3, m2off = opts.m2off,
-      noAlloc = noAlloc)
+      noAlloc = noAlloc, stallPops = stallPops)
     val core = mk(endStep = true)
     /** `endOnce`: the steps after the first young step of a tick leave the end of the build to the next tick's first step */
     val coreRest = if (young && opts.endOnce) { mk(endStep = false) } else { core }
     /** the non-allocating form of `coreRest` (slot `YN`) */
-    lazy val coreNoAlloc = mk(endStep = !(young && opts.endOnce), noAlloc = true)
+    lazy val coreNoAlloc = mk(endStep = !(young && opts.endOnce), noAlloc = true, stallPops = !opts.freePops)
     val regs: Vector[(String, Set[K])] = core.regs ++
       (if (young) { Vector(n("src") -> Set[K](KInp), n("rc") -> Set[K](KInp)) } else { Vector() }) ++
       Vector("pendF", "pendB", "pendN").map(q => n(q) -> Set[K](KTag(tags.IQC)))

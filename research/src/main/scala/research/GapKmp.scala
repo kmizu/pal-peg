@@ -93,7 +93,7 @@ object GapKmp {
   final class Core(M: Mod, T: Tags, feed: Feed, matchOnly: Boolean = false, report: Boolean = true, mergeTmp: Boolean = false,
                    compact: Boolean = false, sharedRK: Boolean = false, endAsEntry: Boolean = false, endStep: Boolean = true,
                    unfold: Boolean = false, lgap: Boolean = false, merge2: Boolean = false,
-                   merge3: Boolean = false, m2off: Set[String] = Set(), noAlloc: Boolean = false)
+                   merge3: Boolean = false, m2off: Set[String] = Set(), noAlloc: Boolean = false, stallPops: Boolean = true)
       extends OverlapPal.BankCore {
     /** the branches of the last `universal` in priority order, with their guards (STRATEGY.md §3e, experiment E3): the pops, then
       * the BUILD and MATCH transitions split by their fast paths, then the FIFO reversal */
@@ -104,6 +104,10 @@ object GapKmp {
       * exclusive guards keep every later branch out and every register and bit keeps its value), so the cells of a tick are
       * born only at the layers of the full step */
     require(!noAlloc || compact, "a non-allocating step needs the compact states")
+    /** `stallPops = false` (STRATEGY.md §3h, a what-if): the non-allocating step keeps the list and K node sites and acts on every
+      * pop, stalling only on builds, the end, the FIFO reversal and match mismatches; its rates are those a matcher whose pops
+      * store no cell would reach with the same steps (not a candidate grammar: its pops still allocate) */
+    private val freePops = noAlloc && !stallPops
     import M.*
     import T.*
     private val rvName = if (mergeTmp) { "tmp" } else { "rv" }
@@ -198,7 +202,9 @@ object GapKmp {
       def anyOn(cs: C*): C = any(cs.filter(_ != False)*)
       /** a branch that stores a new cell: with noAlloc it stalls (an empty body) */
       def alloc(g: C)(f: Prog#Upd => Unit): Unit = if (noAlloc) { p.when(g)(_ => ()) } else { p.when(g)(f) }
-      def allocOn(g: C)(f: Prog#Upd => Unit): Unit = if (g != False) { alloc(g)(f) }
+      /** a pop that stores a new cell: it stalls like `alloc` unless the pops are free (the what-if of §3h) */
+      def popAlloc(g: C)(f: Prog#Upd => Unit): Unit = if (freePops) { p.when(g)(f) } else { alloc(g)(f) }
+      def popAllocOn(g: C)(f: Prog#Upd => Unit): Unit = if (g != False) { popAlloc(g)(f) }
       /** unfold: a transition that mismatches at an entry with a nonempty gap unfolds it in the same step */
       val gU: C = if (unfold) { all(gTrans, not(same), not(all(IsNull(Fld(cur, 2)), IsNull(Fld(cur, 3)), IsNull(Fld(cur, 4))))) } else { False }
       // shared allocation sites, one per tag: the list node (GNODE for the mismatch sequence of a transition, LNODE
@@ -207,7 +213,7 @@ object GapKmp {
       // lgap (STRATEGY.md §3e): gap(cur) ++ [cur] ++ L is [cur] ++ L when gap(cur) is empty, so the node is an LNODE then: its
       // later pop is one popL instead of a popG followed by a takePop
       val gapful: C = if (lgap) { not(all(IsNull(Fld(cur, 2)), IsNull(Fld(cur, 3)), IsNull(Fld(cur, 4)))) } else { True }
-      val lnode: E = if (noAlloc) { Null } else p.site(if (unfold && matchOnly) { Const(LNODE) }
+      val lnode: E = if (noAlloc && !freePops) { Null } else p.site(if (unfold && matchOnly) { Const(LNODE) }
         else if (unfold) { TE.Ite(if (lgap) { all(gBuildT, same, gapful) } else { And(gBuildT, same) }, Const(GNODE), Const(LNODE)) }
         else { TE.Ite(if (lgap) { And(gTrans, gapful) } else { gTrans }, Const(GNODE), Const(LNODE)) },
         selectE(Vector((gRev, rearE(rv)), (gPopG, gE), (gPopR, rearE(R)), (gTakeRev, rearE(k3))), cur),
@@ -221,7 +227,7 @@ object GapKmp {
       val kf4 = selectE(uc.map(c => (c._1, Fld(cur, 3))) ++ Vector((gPopG, Fld(gE, 3)), (gSpl1, Fld(ks, 2)), (gSpl2, Fld(ks, 4))), Null)
       val rearNext = Ite(all(gBuildT, same, rOnly), Null, R)   // fast4: the rear becomes [E_i]
       def rearFields(e: E, next: E): Vector[E] = if (T.rearEntry == 3) { Vector(Null, next, e, Null) } else { Vector(e, next, Null, Null) }
-      val (knode, rnode) = if (noAlloc) { (Null, Null) } else if (sharedRK && !matchOnly) {
+      val (knode, rnode) = if (freePops) { (p.site(Const(KNODE), kf1, kf2, kf3, kf4), Null) } else if (noAlloc) { (Null, Null) } else if (sharedRK && !matchOnly) {
         val rf = rearFields(entry, rearNext)
         val rk = p.site(TE.Ite(gBuildT, Const(RNODE), Const(KNODE)), Ite(gBuildT, rf(0), kf1), Ite(gBuildT, rf(1), kf2), Ite(gBuildT, rf(2), kf3), Ite(gBuildT, rf(3), kf4))
         (rk, rk)
@@ -241,26 +247,26 @@ object GapKmp {
       def consumeSrc(u: Prog#Upd): Unit = { u.set(feed.src, prevIn(src)); u.set(feed.pendF, Ite(IsNull(rc), pendF, iq)); u.set(feed.rc, prevIn(rc)) }
       // ---- pop in progress
       p.when(And(gRev, rvLast)) { u => u.set(n("cur"), rearE(rv)); u.set(n(rvName), Null); leave(u) }   // the last reversed entry is the state
-      allocOn(gRev2) { u => u.set(n("L"), lnode); u.set(n("cur"), rearE(Fld(rv, 2))); u.set(n(rvName), Null); leave(u) }
-      alloc(gRev) { u => u.set(n("L"), lnode); u.set(n(rvName), Fld(rv, 2)) }
-      if (noAlloc) { p.when(And(gSpl1, IsNull(Fld(ks, 2)))) { u => u.set(n("K"), K); setSub(u, SSPL2) } }   // no K node needed
-      alloc(gSpl1) { u => u.set(n("K"), Ite(IsNull(Fld(ks, 2)), K, knode)); setSub(u, SSPL2) }          // the spliced stack's own rest first
+      popAllocOn(gRev2) { u => u.set(n("L"), lnode); u.set(n("cur"), rearE(Fld(rv, 2))); u.set(n(rvName), Null); leave(u) }
+      popAlloc(gRev) { u => u.set(n("L"), lnode); u.set(n(rvName), Fld(rv, 2)) }
+      if (noAlloc && !freePops) { p.when(And(gSpl1, IsNull(Fld(ks, 2)))) { u => u.set(n("K"), K); setSub(u, SSPL2) } }   // no K node needed
+      popAlloc(gSpl1) { u => u.set(n("K"), Ite(IsNull(Fld(ks, 2)), K, knode)); setSub(u, SSPL2) }          // the spliced stack's own rest first
       whenOn(gSpl2Pop) { u => u.set(n("cur"), Fld(Fld(ks, 1), 1)); u.set(n("L"), Fld(Fld(ks, 1), 2)); u.set(n(ksName), Null); leave(u) }
-      alloc(gSpl2) { u => u.set(n("K"), knode); u.set(n(ksName), Null); setSub(u, S0) }                    // then its three slots
+      popAlloc(gSpl2) { u => u.set(n("K"), knode); u.set(n(ksName), Null); setSub(u, S0) }                    // then its three slots
       p.when(gPopL) { u => u.set(n("cur"), Fld(L, 1)); u.set(n("L"), Fld(L, 2)); leave(u) }
-      allocOn(gPopGL) { u => u.set(n("cur"), Fld(Fld(gE, 2), 1)); u.set(n("L"), Fld(Fld(gE, 2), 2)); u.set(n("K"), knode); leave(u) }
-      alloc(gPopG) { u => u.set(n("L"), Fld(gE, 2)); u.set(n("K"), knode) }                          // gap(e) ++ [e] ++ rest in one step
-      allocOn(gTakeSplSkip) { u => u.set(n(ksName), k4); u.set(n("K"), knode); setSub(u, SSPL2) }
-      alloc(gTakeSpl) { u => u.set(n(ksName), k4); u.set(n("K"), knode); setSub(u, SSPL1) }
-      if (noAlloc) { p.when(And(gTakeRev1, IsNull(k1))) { u => u.set(n("cur"), rearE(k3)); u.set(n("K"), k2); leave(u) } }   // no K node needed
-      alloc(gTakeRev1) { u => u.set(n("cur"), rearE(k3)); u.set(n("K"), Ite(IsNull(k1), k2, knode)); leave(u) }
-      allocOn(gTakeRev2) { u => u.set(n("L"), lnode); u.set(n("cur"), rearE(Fld(k3, 2))); u.set(n(rvName), Null); u.set(n("K"), Ite(IsNull(k1), k2, knode)); leave(u) }
-      alloc(gTakeRev) { u => u.set(n("L"), lnode); u.set(n(rvName), Fld(k3, 2)); u.set(n("K"), Ite(IsNull(k1), k2, knode)) }
+      popAllocOn(gPopGL) { u => u.set(n("cur"), Fld(Fld(gE, 2), 1)); u.set(n("L"), Fld(Fld(gE, 2), 2)); u.set(n("K"), knode); leave(u) }
+      popAlloc(gPopG) { u => u.set(n("L"), Fld(gE, 2)); u.set(n("K"), knode) }                          // gap(e) ++ [e] ++ rest in one step
+      popAllocOn(gTakeSplSkip) { u => u.set(n(ksName), k4); u.set(n("K"), knode); setSub(u, SSPL2) }
+      popAlloc(gTakeSpl) { u => u.set(n(ksName), k4); u.set(n("K"), knode); setSub(u, SSPL1) }
+      if (noAlloc && !freePops) { p.when(And(gTakeRev1, IsNull(k1))) { u => u.set(n("cur"), rearE(k3)); u.set(n("K"), k2); leave(u) } }   // no K node needed
+      popAlloc(gTakeRev1) { u => u.set(n("cur"), rearE(k3)); u.set(n("K"), Ite(IsNull(k1), k2, knode)); leave(u) }
+      popAllocOn(gTakeRev2) { u => u.set(n("L"), lnode); u.set(n("cur"), rearE(Fld(k3, 2))); u.set(n(rvName), Null); u.set(n("K"), Ite(IsNull(k1), k2, knode)); leave(u) }
+      popAlloc(gTakeRev) { u => u.set(n("L"), lnode); u.set(n(rvName), Fld(k3, 2)); u.set(n("K"), Ite(IsNull(k1), k2, knode)) }
       p.when(gTakePop) { u => u.set(n("cur"), Fld(k1, 1)); u.set(n("L"), Fld(k1, 2)); u.set(n("K"), k2); leave(u) }
       p.when(gTakeList) { u => u.set(n("L"), k1); u.set(n("K"), k2) }
       p.when(gTakeEmpty) { u => u.set(n("K"), k2) }
       p.when(gPopR1) { u => u.set(n("cur"), rearE(R)); u.set(n("R"), Null); leave(u) }
-      alloc(gPopR) { u => u.set(n("L"), lnode); u.set(n(rvName), Fld(R, 2)); u.set(n("R"), Null) }   // the top goes to L, the rest is reversed
+      popAlloc(gPopR) { u => u.set(n("L"), lnode); u.set(n(rvName), Fld(R, 2)); u.set(n("R"), Null) }   // the top goes to L, the rest is reversed
       load(p)
       locally {
         val fastM = And(same, headIsL); val fastK = And(same, kTop); val fastR = And(same, rOnly)

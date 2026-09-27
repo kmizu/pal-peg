@@ -604,6 +604,46 @@ sbt "run cap-trace 13 128 b1a178b noacc fuse compact endent endonce unfold tmp l
 sbt "run young-alloc 11 128 400 noacc fuse compact endent endonce unfold tmp lgap merge2 noG noR beta=13/32"   # add old for the old role
 ```
 
+## 3h. Pops that store no cell (2026-09-27)
+
+§3g ended on the need for pops that store no cell. Where the young role's busy steps go (`step-bigrams 11 4 128 every 300 …`,
+2,075 words, measured):
+
+| kind | share of busy steps | stores a cell |
+|---|---:|---|
+| builds (fast1–4, misZ, misL, mis, same-pop) | 33.4 % | yes (entry, rear cell, list or K node, replay cell) |
+| pops: `rev` 15.5, `popG` 11.5, `takeRev1` 2.1, `popR` 1.8, `takeRev` 1.1, splices 2.4 | 34.4 % | yes |
+| FIFO reversal | 7.0 % | yes (queue cell) |
+| match mismatches outside `misZ` | 1.0 % | yes (K node) |
+| fast matches, `rev-last`, `misZ`, same-pop, `popL`, `takePop`, `takeEmpty` | 24.2 % | no |
+
+**The prize, measured with a what-if machine.** With `freepops` (`GapKmp.Core(stallPops = false)`) an N slot keeps the list and
+K node sites and acts on every pop, stalling only on builds, the end, the FIFO reversal and mismatches — the rates a matcher with
+free pops would reach with the same steps (`CapSuite` checks this stall rule). Every length ≤ 1,025 (seed 5):
+
+| machine | allocating slots after IN | result |
+|---|---|---|
+| 11/4 | 4–9 of 10 | false at n 180–362 |
+| 12/4 | 5, 7 of 11 / 8 of 11 | false at n 180, 360 / pass |
+| 13/4 | 5 of 12 / 7, 8 of 12 | false at n 180 / pass |
+
+On `b a^178 b` the pop cascade after the build now runs at full width and 13/4 answers at 180. By the arm model of §3g, 13/4
+with 7 allocating slots would have about 85 % of today's arms and 12/4 with 8 about 89 % (estimates): the builds, the FIFO and
+the mismatches still need 8 allocating young layers of 13.
+
+**Why pops must store cells here.** A cell points only to cells born before it, and a role has a bounded set of registers.
+
+- The rear of the live sequence is a run of entries in build order, consumed oldest first. After an entry is consumed the next
+  one is newer, and nothing older points to it: a step either makes a cell (the reversal builds the run front first, one cell
+  per entry) or walks back from a newer anchor, which is quadratic and breaks the real-time rates.
+- A gap is built with its entry, before any context that unfolds it, and gaps nest (94 % of `popG` meet another GNODE at the
+  head of the gap). Each nested unfold needs its continuation after the gap, and the link from one continuation to the next can
+  only live in a cell made at the unfold (a frame), or be re-walked.
+
+So pops that store no cell do not exist for this representation, and even free pops would buy about 15 % of the arms. A further
+cut of the young role's branching needs a matcher that only walks toward older data during matching — KMP-style advances
+through per-position data go the other way; none was found. The current best stays §3f.
+
 ## 4. The handoff's other routes, re-evaluated with these numbers
 
 - **Worst-case catenable deques (§4.4 of the handoff).** The rate is set by accumulated work on random palindromes

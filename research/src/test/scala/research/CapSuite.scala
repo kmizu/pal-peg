@@ -55,6 +55,44 @@ class CapSuite extends munit.FunSuite {
     for (w <- words(260, b1332)) { assertEquals(stallRule(m, w), None, s"'${w.take(40)}' (${w.length})") }
   }
 
+  private val popNames = Set("rev-last", "rev2", "rev", "spl1", "spl2pop", "spl2", "popL", "popGL", "popG", "takeSplSkip", "takeSpl",
+    "takeRev1", "takeRev2", "takeRev", "takePop", "takeList", "takeEmpty", "popR1", "popR")
+  /** the same cell, or two cells born at layer t of this tick with the same tag and the same fields (each step makes its own) */
+  private def sameCell(a: Lpm.RCell, b: Lpm.RCell, tick: Int, t: Int): Boolean = (a eq b) ||
+    (a != null && b != null && a.tick == tick && b.tick == tick && a.layer == t && b.layer == t && a.tag == b.tag &&
+      (1 to 4).forall(f => sameCell(a.fld(f), b.fld(f), tick, t)))
+
+  test("with free pops (STRATEGY.md §3h, a what-if) an N layer acts on every pop and stalls exactly on the other branches that store a cell (words <= 200)") {
+    val o = levers.copy(youngPattern = "ANANANANAN", freePops = true)
+    val m = RolePal.machine(11, 4, 128, o)
+    val branches = RolePal.youngBranches(o)
+    val regNames = m.regs.map(_._1)
+    for (w <- words(200, b1332)) {
+      var st = Lpm.State(Map.empty, m.initTrue)
+      var prevSep: Lpm.RCell = null
+      for (i <- (w.length - 1) to 0 by -1) {
+        val tick = w.length - i
+        val in = new Lpm.RCell(m.alphabet.indexOf(w.charAt(i)), prevSep, null, null, null, -1, -1, tick)
+        val sep = new Lpm.RCell(m.alphabet.length, in, null, null, null, -2, -1, tick)
+        for (t <- 1 to m.budget) {
+          val pre = st
+          st = Lpm.unitStep(m.slotAt(t), regNames, m.bits, st, in, sep, t == 1, t, tick)
+          if (m.schedule(t - 1) == "YN") {
+            val full = Lpm.unitStep(m.slots("YU"), regNames, m.bits, pre, in, sep, false, t, tick)
+            val taken = branches.collectFirst { case (name, g) if Lpm.holds(g, pre) => name }
+            val fresh = full.regs.values.exists(c => c != null && c.tick == tick && c.layer == t)
+            val like = (s: Lpm.State) => regNames.forall(r => sameCell(s.regs.getOrElse(r, null), st.regs.getOrElse(r, null), tick, t)) && s.bits == st.bits
+            val ctx = s"'${w.take(40)}' (${w.length}) tick $tick layer $t branch $taken"
+            if (taken.exists(popNames)) { assert(like(full), s"$ctx: a pop must act as the full step") }
+            else if (fresh) { assert(like(pre), s"$ctx: a non-pop branch that stores a cell must stall") }
+            else { assert(like(full), s"$ctx: a branch that stores no cell must act as the full step") }
+          }
+        }
+        prevSep = sep
+      }
+    }
+  }
+
   test("the code backend compiles N slots to the interpreter's language (young: 1 or 2 slots after IN; old: 1; minAnchor 8; with and without sound pts)") {
     val variants = Vector("plain" -> LpsCode.Options(), "sound pts" -> LpsCode.Options(sound = true, pointsTo = true))
     for ((ky, pat, opat, maxLen) <- Vector((2, "N", "", 12), (3, "AN", "", 12), (3, "NA", "", 12), (2, "", "N", 12)); (name, v) <- variants) {

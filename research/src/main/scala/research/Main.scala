@@ -419,7 +419,7 @@ object Main {
       // the young steps (IN's and the YU slots') that store a new cell, that act without one, and that do nothing; and per tick the
       // number of storing steps (a layer that may not store a cell can only take the second kind of work)
       val sc = OverlapPal.schedArg(rest0)
-      val ro = RolePal.Options(youngPattern = RolePal.patternOf(rest0), oldPattern = RolePal.patternOf(rest0, "opat"), youngReport = !rest0.contains("noacc"), fuseIn = rest0.contains("fuse"),
+      val ro = RolePal.Options(youngPattern = RolePal.patternOf(rest0), oldPattern = RolePal.patternOf(rest0, "opat"), freePops = rest0.contains("freepops"), youngReport = !rest0.contains("noacc"), fuseIn = rest0.contains("fuse"),
         compact = rest0.contains("compact"), endAsEntry = rest0.contains("endent"), endOnce = rest0.contains("endonce"), sched = sc,
         unfold = rest0.contains("unfold"), mergeTmp = rest0.contains("tmp"), lgap = rest0.contains("lgap"), merge2 = rest0.contains("merge2"),
         merge3 = rest0.contains("merge3"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => rest0.contains(s"no$x")))
@@ -455,7 +455,7 @@ object Main {
       // after IN did — a step that changed the young state (+), a stall or idle step (.) — and whether the full step there would
       // have stored a new cell (A: allocating work waited at an N slot)
       val sc = OverlapPal.schedArg(rest0)
-      val ro = RolePal.Options(youngPattern = RolePal.patternOf(rest0), oldPattern = RolePal.patternOf(rest0, "opat"), youngReport = !rest0.contains("noacc"), fuseIn = rest0.contains("fuse"),
+      val ro = RolePal.Options(youngPattern = RolePal.patternOf(rest0), oldPattern = RolePal.patternOf(rest0, "opat"), freePops = rest0.contains("freepops"), youngReport = !rest0.contains("noacc"), fuseIn = rest0.contains("fuse"),
         compact = rest0.contains("compact"), endAsEntry = rest0.contains("endent"), endOnce = rest0.contains("endonce"), sched = sc,
         unfold = rest0.contains("unfold"), mergeTmp = rest0.contains("tmp"), lgap = rest0.contains("lgap"), merge2 = rest0.contains("merge2"),
         merge3 = rest0.contains("merge3"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => rest0.contains(s"no$x")))
@@ -492,7 +492,7 @@ object Main {
       // that outlive it (reachable from a register at its end), by tag, against the sites of the tag. A pointer addressed by
       // (tick, index within the tick) needs at least that many alternatives, so this bounds any re-addressing of the cells
       val sc = OverlapPal.schedArg(rest0)
-      val ro = RolePal.Options(youngPattern = RolePal.patternOf(rest0), oldPattern = RolePal.patternOf(rest0, "opat"), youngReport = !rest0.contains("noacc"), fuseIn = rest0.contains("fuse"), compact = rest0.contains("compact"),
+      val ro = RolePal.Options(youngPattern = RolePal.patternOf(rest0), oldPattern = RolePal.patternOf(rest0, "opat"), freePops = rest0.contains("freepops"), youngReport = !rest0.contains("noacc"), fuseIn = rest0.contains("fuse"), compact = rest0.contains("compact"),
         endAsEntry = rest0.contains("endent"), endOnce = rest0.contains("endonce"), sched = sc, unfold = rest0.contains("unfold"), mergeTmp = rest0.contains("tmp"),
         lgap = rest0.contains("lgap"), merge2 = rest0.contains("merge2"),
         merge3 = rest0.contains("merge3"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => rest0.contains(s"no$x")))
@@ -521,7 +521,7 @@ object Main {
       // step-bigrams <ky> <ko> <W0> random <count> <maxLen> | every <maxLen> [role flags] [beta=..]: the branch of every young step
       // (YU/YUF slots, from the guards on the state before it) and the pairs of consecutive busy young steps (STRATEGY.md §3e, E3)
       val sc = OverlapPal.schedArg(rest0)
-      val ro = RolePal.Options(youngPattern = RolePal.patternOf(rest0), oldPattern = RolePal.patternOf(rest0, "opat"), youngReport = !rest0.contains("noacc"), fuseIn = rest0.contains("fuse"), compact = rest0.contains("compact"),
+      val ro = RolePal.Options(youngPattern = RolePal.patternOf(rest0), oldPattern = RolePal.patternOf(rest0, "opat"), freePops = rest0.contains("freepops"), youngReport = !rest0.contains("noacc"), fuseIn = rest0.contains("fuse"), compact = rest0.contains("compact"),
         endAsEntry = rest0.contains("endent"), endOnce = rest0.contains("endonce"), sched = sc, unfold = rest0.contains("unfold"), mergeTmp = rest0.contains("tmp"),
         lgap = rest0.contains("lgap"), merge2 = rest0.contains("merge2"),
         merge3 = rest0.contains("merge3"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => rest0.contains(s"no$x")))
@@ -696,8 +696,8 @@ object Main {
       // pal3: LpsWarmup.machine(m, f, W0), fallback below 2 W0; overlap: OverlapPal.machine(a, b, W0), fallback below 3 W0 / 2
       val trie = rest.contains("trie")
       // role options: noacc (no young acc), tmp (rv/ks merged), fuse (first old and young steps fused into IN)
-      val roleFlags = Set("noacc", "tmp", "fuse", "compact", "rk", "endent", "endonce", "p3", "star", "unfold", "mirror", "pairs", "recolour", "lgap", "merge2", "merge3", "noU", "noG", "noR", "noR1", "noR2", "sound", "pts")
-      val ropts = RolePal.Options(youngPattern = RolePal.patternOf(rest), oldPattern = RolePal.patternOf(rest, "opat"), youngReport = !rest.contains("noacc"), mergeTmp = rest.contains("tmp"), fuseIn = rest.contains("fuse"), compact = rest.contains("compact"),
+      val roleFlags = Set("noacc", "tmp", "fuse", "compact", "rk", "endent", "endonce", "p3", "star", "unfold", "mirror", "pairs", "recolour", "lgap", "merge2", "merge3", "noU", "noG", "noR", "noR1", "noR2", "sound", "pts", "freepops")
+      val ropts = RolePal.Options(youngPattern = RolePal.patternOf(rest), oldPattern = RolePal.patternOf(rest, "opat"), freePops = rest.contains("freepops"), youngReport = !rest.contains("noacc"), mergeTmp = rest.contains("tmp"), fuseIn = rest.contains("fuse"), compact = rest.contains("compact"),
         sharedRK = rest.contains("rk"), endAsEntry = rest.contains("endent"), endOnce = rest.contains("endonce"), rearInP3 = rest.contains("p3"),
         sched = OverlapPal.schedArg(rest), unfold = rest.contains("unfold"), pairs = rest.contains("pairs"), lgap = rest.contains("lgap"),
         merge2 = rest.contains("merge2"), merge3 = rest.contains("merge3"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => rest.contains(s"no$x")))
@@ -825,7 +825,7 @@ object Main {
           // r<ky>/<ko>[:flag,flag] with the role options noacc, tmp, fuse
           val (sizes, flags) = cfg.drop(1).split(":", 2) match { case Array(a) => (a, Set.empty[String]); case Array(a, f) => (a, f.split(",").toSet) }
           val Array(ky, ko) = sizes.split("/").map(_.toInt)
-          val ro = RolePal.Options(youngPattern = RolePal.patternOf(flags), oldPattern = RolePal.patternOf(flags, "opat"), youngReport = !flags("noacc"), mergeTmp = flags("tmp"), fuseIn = flags("fuse"), compact = flags("compact"),
+          val ro = RolePal.Options(youngPattern = RolePal.patternOf(flags), oldPattern = RolePal.patternOf(flags, "opat"), freePops = flags.contains("freepops"), youngReport = !flags("noacc"), mergeTmp = flags("tmp"), fuseIn = flags("fuse"), compact = flags("compact"),
             sharedRK = flags("rk"), endAsEntry = flags("endent"), endOnce = flags("endonce"), rearInP3 = flags("p3"), sched = sc, unfold = flags("unfold"),
             lgap = flags("lgap"), merge2 = flags("merge2"), merge3 = flags("merge3"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => flags(s"no$x")))
           OverlapProfile.grid(cfg, RolePal.machine(ky, ko, minAnchor, ro), minAnchor, true, families, threadsS.toInt, OverlapProfile.Roles, ro.fuseIn, sc)
@@ -852,9 +852,9 @@ object Main {
       // role options for the role machine (as in lps-code): noacc fuse compact endent endonce
       val roleOpt = Set("noacc", "fuse", "compact", "endent", "endonce", "unfold")
       val sc = OverlapPal.schedArg(rest0)
-      val ro = RolePal.Options(youngPattern = RolePal.patternOf(rest0), oldPattern = RolePal.patternOf(rest0, "opat"), youngReport = !rest0.contains("noacc"), fuseIn = rest0.contains("fuse"), compact = rest0.contains("compact"),
+      val ro = RolePal.Options(youngPattern = RolePal.patternOf(rest0), oldPattern = RolePal.patternOf(rest0, "opat"), freePops = rest0.contains("freepops"), youngReport = !rest0.contains("noacc"), fuseIn = rest0.contains("fuse"), compact = rest0.contains("compact"),
         endAsEntry = rest0.contains("endent"), endOnce = rest0.contains("endonce"), sched = sc, unfold = rest0.contains("unfold"))
-      val rest = rest0.filterNot(x => x == "gap" || x == "role" || roleOpt(x) || x.startsWith("old=") || x.startsWith("dump=") || x.startsWith("beta=") || x.startsWith("ypat=") || x.startsWith("opat="))
+      val rest = rest0.filterNot(x => x == "gap" || x == "role" || roleOpt(x) || x.startsWith("old=") || x.startsWith("dump=") || x.startsWith("beta=") || x.startsWith("ypat=") || x.startsWith("opat=") || x == "freepops")
       val dumped = Vector.newBuilder[String]
       val coreKind: OverlapPal.CoreKind = if (rest0.contains("gap")) { OverlapPal.GapCore } else { OverlapPal.Kmp2Core }
       val (a, b) = (rest(0).toInt, rest(1).toInt)

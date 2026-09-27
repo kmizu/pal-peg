@@ -98,3 +98,13 @@ Grammars of the configurations that were measured (`peg-cse-improve <x> 65536 60
 
 Allocation (`young-alloc 11 128 400 …`, 3,283 words): young steps 29.8 % storing a cell, 8.7 % acting without one, 61.5 %
 idle; ticks with any storing step: 11 of 11 in 50.2 %, 10 in 17.2 %. Old role: 1.9 % / 5.3 % / 92.8 %.
+
+## §3h (2026-09-27): the free-pops what-if, measured
+
+`pool-grid 128 3 3 3 0 3 2 beta=13/32 every=1025 r<ky>/4:<§3e flags>,freepops,ypat=<P>` (seed 5):
+
+| machine | pattern after IN | result |
+|---|---|---|
+| 11/4 | NANANNANAN, ANANANANAN, ANANAANANA, ANAAANAANA, AANAAAANAA, AAAAANAAAA | false at n 180, 180, 180, 180, 187, 362 |
+| 12/4 | NANANANANAN, ANAANANAANA / ANAAANAAANA | false at n 180, 360 / pass (7,158 words) |
+| 13/4 | NANANANNANAN / ANANAANANANA, ANAANAANAANA | false at n 180 / pass, pass |
