@@ -312,3 +312,12 @@ A what-if machine whose N slots may run every pop showed the prize first: the ca
 of 13, about 15 % of the arms. And the pops cannot be freed in this model: cells point only to older cells and registers are
 bounded, so consuming the build-ordered rear oldest-first needs a cell per entry (or quadratic re-walks), and nested unfolds need
 a frame per level. The young role's branching is bound by the matcher's representation; §3f stays the best.
+
+## 18. A matcher that only walks toward older data (2026-09-27, `STRATEGY.md` §3i)
+
+Searched: KMP, the palindromic tree, online Manacher and fingerprints each need a step to newer data (a failure jump, the start of a
+shrunken palindromic suffix, a moved left end) or are inexact. The reason is shared: verifying an alignment walks text and pattern
+the same way, and overlapping candidates need a re-read or a jump back; a mirror maps older positions to newer ones. What the search
+changed is the target: steps to newer data cost cells, and cells are cheap when born at fixed sites; the branching of a read is the
+number of sites. For anchors the floor is about 1/β ≈ 2.5 entries a tick if the build and the match were pipelined, against 11
+allocating layers now. No such design yet.

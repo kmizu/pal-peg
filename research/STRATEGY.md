@@ -644,6 +644,40 @@ So pops that store no cell do not exist for this representation, and even free p
 cut of the young role's branching needs a matcher that only walks toward older data during matching — KMP-style advances
 through per-position data go the other way; none was found. The current best stays §3f.
 
+## 3i. Searching for a matcher that only walks toward older data (2026-09-27)
+
+§3h ended on the need for a matcher that, while matching, only moves to older data. The search, with what came out:
+
+**The model's law.** In a PEG every dependency runs from a newer position to an older one: a tick can read anything older in O(1)
+through a pointer, and can reach newer data only through a cell it makes now. So a "forward step" (to newer data) costs one new
+cell; the question is whether matching can avoid forward steps.
+
+**Candidates, and where each needs a forward step:**
+
+| matcher | older-only part | the forward step |
+|---|---|---|
+| KMP over the reversed prefix (today) | advancing in the pattern is walking the input backward | a failure jump goes to a newer pattern letter; in entry order, advancing goes to a newer entry |
+| palindromic tree (eertree) | suffix links and the letter before a linked suffix (`X[len(link X)]`, stored with the node) | after the palindromic suffix shrinks, its start lies inside the old one: "len letters back from now" is a newer position |
+| online Manacher | the mirror centre and its radius are older | the same: after a switch, the left end moves right (newer) |
+| fingerprints (Karp–Rabin) | O(1) per letter, older only | not exact; the grammar must be |
+
+The common cause: checking an alignment walks text and pattern in the same direction; the text is free only as the letter
+arriving now, the pattern only as the input walked backward, and a mismatch leaves overlapping candidates whose verification needs
+a re-read or a jump the other way. Palindromes are mirror-symmetric, and a mirror maps older positions to newer ones. So a matcher
+that never steps forward was not found, and the argument says it cannot handle the overlapping candidates without one.
+
+**What the search changes: sites, not steps.** A forward step is a cell, and a cell costs little if it is born at a fixed site: the
+branching of a read is the number of sites a pointer may point to, and k cells of one kind born in one tick force k. For the
+anchor scheme the floor is then the entries a tick must make: a bank builds h letters within its young window of about β h ticks,
+so a perfectly pipelined young role makes about 1/β ≈ 2.5 entries a tick (estimate), against 11 layers that may make one today.
+Getting there needs the build and the match interleaved at a steady rate instead of a build burst followed by a pop cascade, and
+each kind of cell born at few layers (§3g's fixed allocating layers, per kind). The rates of §3g–§3h say the present gap matcher
+cannot do it (its pops allocate); a design that can is open.
+
+**Literature.** The known real-time palindrome recognizers are much larger machines: Galil's multitape Turing machine (JCSS 1978,
+after the STOC 1976 real-time string matching), Slisenko's recognizer (41 tapes, 20 after Seiferas–Galil's multihead simulation).
+The papers themselves were not reachable here (publisher 403).
+
 ## 4. The handoff's other routes, re-evaluated with these numbers
 
 - **Worst-case catenable deques (§4.4 of the handoff).** The rate is set by accumulated work on random palindromes
