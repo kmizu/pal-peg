@@ -1,6 +1,15 @@
 # Generated grammars
 
-- `anchors-role-y11-o4-w128-n994.peg.gz` — **the current best (2026-09-27, `STRATEGY.md` §3e): 994 rules.** Role machine
+- `anchors-role-y11-o4-w128-pts-n996.peg.gz` — **the current best (2026-09-27, `STRATEGY.md` §3f): 996 rules.** The §3e
+  machine compiled with `sound` (no tag test in a field read) and points-to domains (`pts`), greedy inlining and named common
+  sub-expressions at ×2.45: 349,849 rhs nodes, max rhs 24,610, 1,542,201 bytes (115,704 gzipped). Rates: those of §3e (the
+  machine is unchanged). No undefined reference; re-parsed = oracle on all words ≤ 9; Rust runner 0 mismatches on the 168
+  words of §3c, 796 words of every length 3–200 and every counterexample of both resource files.
+  `metrics/anchors-role-y11-o4-w128-pts-n996.json`. Reproduce: `run lps-code export role 11 4 128 C.peg noacc fuse compact
+  endent endonce star unfold tmp mirror lgap merge2 noG noR sound pts beta=13/32` then `run peg-cse-improve C.peg 2.45 65536 60
+  1000 10 out.peg out.json`.
+- `anchors-role-y11-o4-w128-pts.peg.gz` — the same before inlining: 3,521 rules, 143,051 rhs nodes, 22 colours.
+- `anchors-role-y11-o4-w128-n994.peg.gz` — the best of §3e (2026-09-27, `STRATEGY.md` §3e): 994 rules. Role machine
   11/4, configuration A + `unfold` + `tmp` + `lgap` + the unfold-then-popL merge (`merge2 noG noR`), β = 13/32, W₀ = 128 (first
   machine answer 180), mirrored fallback, greedy inlining and named common sub-expressions at ×2.56: 438,487 rhs nodes, max rhs
   24,605, 1,905,775 bytes (135,554 gzipped). Rates: every length ≤ 1,025 (seeds 5 and 7), the three seeds, 25 sampled lengths

@@ -14,8 +14,9 @@ inliner gives 1,377 (×2 nodes), 1,194 (×3), 1,120 (×4), **999 (×9.75, 1,945,
 **Correction (§3b): that machine, and both 999-rule grammars made from it, answer false on a 79-letter palindrome.** The
 grammar that replaces them (13/4, β 7/16, W₀ 64): 999 rules at ×4.40, 2,984,353 bytes; ×2 1,257, ×3 1,090, ×4 1,018.
 
-**Current best (§3e):** 11/4 + unfold + `tmp` + `lgap` + the unfold-then-popL merge, β 13/32, W₀ 128, mirrored fallback, common
-sub-expressions named: 994 rules at 438,487 rhs nodes (×2.56), 1,905,775 bytes; ×2 1,098, ×3 951. (§3d: 996 rules at 472,260.)
+**Current best (§3f):** the §3e machine (11/4 + unfold + `tmp` + `lgap` + the unfold-then-popL merge, β 13/32, W₀ 128, mirrored
+fallback) compiled with `sound` and points-to domains, common sub-expressions named: 996 rules at 349,849 rhs nodes (×2.45),
+1,542,201 bytes; ×2.2 1,044, ×3 933. (§3e: 994 rules at 438,487; §3d: 996 at 472,260.)
 
 ## 1. Diagnosis: what survives the inliner, and why (measured)
 
@@ -478,6 +479,67 @@ Reproduce (from `research/`):
 sbt "run lps-code export role 11 4 128 C.peg noacc fuse compact endent endonce star unfold tmp mirror lgap merge2 noG noR beta=13/32" \
     "run peg-cse-improve C.peg 2.56 65536 60 1000 10 out.peg out.json"
 sbt "run step-bigrams 12 4 128 every 300 noacc fuse compact endent endonce unfold tmp beta=7/16"   # D (add lgap for E)
+```
+
+## 3f. Cutting the branching of one read (2026-09-27)
+
+§3e ended on the price of branching: a read `Fld(x, f)` compiles to one arm per site x may point to
+(`&(x_c Tail_c) x C_l_i_pf`), and every read dispatches twice (the extent and the colour code). Where the tokens of the
+§3e compact grammar go (measured, 131,500 tokens, 12,213 arms):
+
+| | share of the grammar |
+|---|---:|
+| dispatch arms | 56.3 % |
+| arms inside the `_c` colour-code rules | 24.8 % |
+| tag-bit tests inside field-read arms | 6.9 % |
+| arms to old-role (OU) sites inside reads of young layers | 4.5 % |
+| pure tag-test dispatches (`TagIs`) | 2.8 % |
+
+Two of these cost nothing to remove, and the machine does not change (its steps, and so its rates, are those of §3e):
+
+- **The tag tests were tautologies.** A list node is an LNODE or a GNODE, and the arm tested `&(!C_2_5_g0 / C_2_5_g0)`:
+  always true, but it kept the tag-bit rules, and the guard rules behind them, alive. The colour already picks a site of
+  the pointer's domain, and the pointer only holds cells of its kinds (`Lps.run` checks that after every slot), so a field
+  read needs no tag test (`sound`; a tag test at a site with the tested tag only is the colour test alone).
+- **Domains came from tags.** `sitesOf(kinds)` gives every site that can make the tag, so a young read also branched to
+  the old role's sites, although the young registers are reset at every birth. `PointsTo` computes per register and per
+  (site, field) the sites whose cells it may hold (an Andersen-style fixpoint over the machine, cut to the kinds' sites);
+  with `pts` a read dispatches over those. A test checks the sets after every slot on the words ≤ 300 of §3e and that no
+  young register may hold an old-role site. The colours fall from 26 to 22.
+
+Measured on the §3e machine (role 11/4, `lgap` + U, β 13/32, W₀ 128, mirrored fallback):
+
+| option | compact rules | compact nodes | colours | fewer than 1,000 rules at | bytes |
+|---|---:|---:|---:|---|---:|
+| none (§3e) | 3,529 | 171,517 | 26 | 994 at 438,487 nodes (×2.56) | 1,905,775 |
+| `sound` | 3,529 | 161,077 | 26 | 987 at 426,202 (×2.65) | 1,849,149 |
+| `pts` | 3,521 | 153,047 | 22 | 992 at 373,810 (×2.45) | 1,619,754 |
+| **`sound pts`** | **3,521** | **143,051** | **22** | **996 at 349,849 (×2.45)** | **1,542,201** |
+
+With both, the arms fall from 12,213 to 9,736; the old-role arms of young reads from 4.5 % to 0.2 %, the tag bits in arms
+from 6.9 % to 1.0 %. The curve with naming: ×2.2 1,044, ×2.35 1,018, ×2.45 996, ×2.56 984, ×2.8 949, ×3 933 (428,580
+nodes, where §3e needed 438,487 for 994). `out/anchors-role-y11-o4-w128-pts-n996.peg.gz`: **996 rules, 349,849 rhs nodes,
+1,542,201 bytes** (−20 % nodes against §3e). Checks: no undefined reference; re-parsed = oracle on all words ≤ 9; the Rust
+runner gives 0 mismatches on the 168 words of §3c, 796 words of every length 3–200 and every counterexample of both resource
+files. The machine is the §3e one, so its rates stand. Still an observation, not a proof.
+
+What is left is the inherent part. The largest group of dispatches now branches over 11 sites, one per young layer (IN and
+the ten YU): a young cell can be made at any layer, so a pointer must name the layer. `tagpar` (the tag in the colour's parity,
+one test per tag test) was not built: pure tag dispatches are 3.0 % of the compact grammar, and doubling the colours
+(22 → up to 44) would add about 22 `Tail`/`Code` helper rules, which the 1,000-rule budget cannot spare.
+
+**How far re-addressing could go** (`alloc-profile 11 4 128 400 …`, measured on 3,283 words ≤ 400): per tick, the cells born
+in the tick that outlive it, by tag. The mean is 0.7–1.5 per tag, but every tag has ticks in which every one of its sites keeps
+a cell (maximum = sites: 17, 11, 15, 11, 15, 11), in the young role's catch-up. A pointer addressed by (tick, index within
+the tick) needs that many alternatives, so no re-addressing of the cells gets below one arm per layer. A smaller fan-out needs
+a machine that caps the cells a tick may keep (for example the builds per tick); that changes the rates and is the next
+structural step, not taken here.
+
+Reproduce (from `research/`):
+
+```sh
+sbt "run lps-code export role 11 4 128 C.peg noacc fuse compact endent endonce star unfold tmp mirror lgap merge2 noG noR sound pts beta=13/32" \
+    "run peg-cse-improve C.peg 2.45 65536 60 1000 10 out.peg out.json"
 ```
 
 ## 4. The handoff's other routes, re-evaluated with these numbers

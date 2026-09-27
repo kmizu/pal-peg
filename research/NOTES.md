@@ -283,3 +283,14 @@ read costs a dispatch over every site its pointer may reach, so the merges cost 
 anchors (β 13/32) young 11 needs only the cheapest merge: 994 rules at 438,487 nodes (×2.56), 1.91 MB, about 7 % below §3d.
 Not dramatic: the per-layer cost of branching, not the number of steps, is the limit now. A literal `False` guard used to be
 compiled into rules; options now add branches only when they are on.
+
+## 15. The branching of one read (2026-09-27, `STRATEGY.md` §3f)
+
+Half of the compact grammar is dispatch arms, so the arms were counted by what they do. Two kinds were waste the compiler
+itself made: a tag test inside every field read of a two-tag site, `&(!g0 / g0)`, always true but keeping the tag-bit rules
+and their guards alive; and arms from young reads to the old role's sites, because domains came from tags although a young
+register, reset at every birth, never holds an old cell. `sound` drops the first (the colour picks a site of the pointer's
+domain and kinds are checked after every slot), points-to domains (`PointsTo`, an Andersen-style fixpoint) the second. The
+machine does not change, so the rates stand: 996 rules at 349,849 nodes (×2.45), 1.54 MB, 20 % below §3e. What remains is one
+arm per young layer, and it is inherent: `alloc-profile` finds ticks in which every site of a tag keeps a cell, so no
+re-addressing of the cells branches less; only a machine that caps the cells kept per tick could.

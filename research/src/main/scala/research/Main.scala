@@ -414,6 +414,36 @@ object Main {
           "rounds" -> trace.map { case (n, nodes, p) => s"$n/$nodes/$p" }.mkString(" "), "sha256_uncompressed" -> sha))
         java.nio.file.Files.write(java.nio.file.Paths.get(outJson), json.getBytes("UTF-8"))
       }
+    case "alloc-profile" :: kyS :: koS :: w0S :: maxS :: rest0 =>
+      // alloc-profile <ky> <ko> <W0> <maxLen> [role flags] [beta=..] (STRATEGY.md §3f): per tick, the cells born in the tick
+      // that outlive it (reachable from a register at its end), by tag, against the sites of the tag. A pointer addressed by
+      // (tick, index within the tick) needs at least that many alternatives, so this bounds any re-addressing of the cells
+      val sc = OverlapPal.schedArg(rest0)
+      val ro = RolePal.Options(youngReport = !rest0.contains("noacc"), fuseIn = rest0.contains("fuse"), compact = rest0.contains("compact"),
+        endAsEntry = rest0.contains("endent"), endOnce = rest0.contains("endonce"), sched = sc, unfold = rest0.contains("unfold"), mergeTmp = rest0.contains("tmp"),
+        lgap = rest0.contains("lgap"), merge2 = rest0.contains("merge2"),
+        merge3 = rest0.contains("merge3"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => rest0.contains(s"no$x")))
+      val maxLen = maxS.toInt
+      val m = RolePal.machine(kyS.toInt, koS.toInt, w0S.toInt, ro)
+      val words = OverlapProfile.switchWords(maxLen, sc) ++ OverlapProfile.adversarialWords(maxLen, sc).take(150) ++ OverlapProfile.everyLengthWords(maxLen)
+      val tags = m.sitesOfTag.keys.toVector.sorted
+      val hist = scala.collection.mutable.HashMap.empty[(Int, Int), Long].withDefaultValue(0L)
+      for (w <- words) {
+        Lps.trace(m, w) { (tick, st) =>
+          val seen = scala.collection.mutable.HashSet.empty[Lpm.RCell]
+          def visit(c: Lpm.RCell): Unit = if (c != null && c.tick == tick && c.tag > m.alphabet.length && seen.add(c)) { (1 to 4).foreach(f => visit(c.fld(f))) }
+          st.regs.values.foreach(visit)
+          val byTag = seen.toVector.groupBy(_.tag).view.mapValues(_.size).toMap
+          for (tag <- tags) { hist((tag, byTag.getOrElse(tag, 0))) += 1 }
+        }
+      }
+      println(s"alloc-profile ${kyS}/${koS} W0 $w0S, ${words.size} words <= $maxLen: cells born in a tick that outlive it, per tick")
+      for (tag <- tags) {
+        val counts = hist.collect { case ((t, k), n) if t == tag => k -> n }.toVector.sortBy(_._1)
+        val ticks = counts.map(_._2).sum.toDouble
+        val mean = counts.map { case (k, n) => k * n }.sum / ticks
+        println(f"  tag $tag%2d: sites ${m.sitesOfTag(tag).size}%2d, max per tick ${counts.filter(_._2 > 0).map(_._1).max}%2d, mean $mean%.2f; histogram ${counts.map { case (k, n) => s"$k:$n" }.mkString(" ")}")
+      }
     case "step-bigrams" :: kyS :: koS :: w0S :: family :: rest0 =>
       // step-bigrams <ky> <ko> <W0> random <count> <maxLen> | every <maxLen> [role flags] [beta=..]: the branch of every young step
       // (YU/YUF slots, from the guards on the state before it) and the pairs of consecutive busy young steps (STRATEGY.md §3e, E3)
@@ -593,7 +623,7 @@ object Main {
       // pal3: LpsWarmup.machine(m, f, W0), fallback below 2 W0; overlap: OverlapPal.machine(a, b, W0), fallback below 3 W0 / 2
       val trie = rest.contains("trie")
       // role options: noacc (no young acc), tmp (rv/ks merged), fuse (first old and young steps fused into IN)
-      val roleFlags = Set("noacc", "tmp", "fuse", "compact", "rk", "endent", "endonce", "p3", "star", "unfold", "mirror", "pairs", "recolour", "lgap", "merge2", "merge3", "noU", "noG", "noR", "noR1", "noR2")
+      val roleFlags = Set("noacc", "tmp", "fuse", "compact", "rk", "endent", "endonce", "p3", "star", "unfold", "mirror", "pairs", "recolour", "lgap", "merge2", "merge3", "noU", "noG", "noR", "noR1", "noR2", "sound", "pts")
       val ropts = RolePal.Options(youngReport = !rest.contains("noacc"), mergeTmp = rest.contains("tmp"), fuseIn = rest.contains("fuse"), compact = rest.contains("compact"),
         sharedRK = rest.contains("rk"), endAsEntry = rest.contains("endent"), endOnce = rest.contains("endonce"), rearInP3 = rest.contains("p3"),
         sched = OverlapPal.schedArg(rest), unfold = rest.contains("unfold"), pairs = rest.contains("pairs"), lgap = rest.contains("lgap"),
@@ -605,7 +635,8 @@ object Main {
         if (kind == "role") { RolePal.machine(ms, fs, w0, ropts) } else if (isOverlap) { OverlapPal.machine(ms, fs, w0, coreKind) } else { LpsWarmup.machine(ms, fs, w0) }
       def firstAnswer(w0: Int): Int = if (isOverlap) { OverlapPal.firstAnswer(w0, ropts.sched) } else { LpsWarmup.firstAnswer(w0) }
       def opts(w0: Int) = LpsCode.Options(fallbackBelow = Some(firstAnswer(w0)), minBirth = w0, dispatch = if (trie) { LpsCode.Trie } else { LpsCode.Direct },
-        codeByStar = rest.contains("star"), mirrorFallback = rest.contains("mirror"), recolour = rest.contains("recolour"))
+        codeByStar = rest.contains("star"), mirrorFallback = rest.contains("mirror"), recolour = rest.contains("recolour"),
+        sound = rest.contains("sound"), pointsTo = rest.contains("pts"))
       // the colours do not depend on the controller; the staged clock needs its smallest W0
       def colours(ms: Int, fs: Int): Int = LpsCode.compileMeta(mk(ms, fs, if (ropts.sched.half) { 2 } else { math.max(8, ropts.sched.minW0) })).coloring.count
       // W0: "auto" = the power of two >= colours; "auto3" = the smallest 3 * 2^k (k >= 2) >= colours (a base-3 clock, RolePal)
