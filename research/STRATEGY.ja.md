@@ -461,6 +461,62 @@ sbt "run lps-code export role 11 4 128 C.peg noacc fuse compact endent endonce s
     "run peg-cse-improve C.peg 2.45 65536 60 1000 10 out.peg out.json"
 ```
 
+## 3g. 1 tick に残せるセルに上限をかける（2026-09-27）
+
+§3f のあとに残ったのは、young の層ごとに 1 本の枝だった。young のセルは 11 の young の層のどれでも生まれうるので、young のポインタの
+読みはそのすべてへ分岐する。次の一手は、1 tick に残せるセルに上限をかける機械。2 つのやり方を比べた：
+
+- **ランクで指す**（tick ごとの確保カウンタ。セルを、tick とその tick 内の確保順で名指す）。読みは K 個のランクへ分岐するが、ランク k の
+  層を見つける分岐は、(ランク, サイト, 欄) ごとの共有のバス規則に移る。§3f の compact 文法の分岐から見積もると、枝は K = 6 で今の 99 %、
+  5 で 87 %。得になるのは K ≤ 4 からで、追い上げの 2/β ≈ 4.9 文字/tick を下回る。作らなかった。
+- **確保できる層を固定する**（作った）。`GapKmp.Core(noAlloc = true)` は確保サイトを持たず、新しいセルをしまう分岐の位置に止まる分岐を
+  置く（本体は空。排他的なガードが後ろの分岐をすべて締め出す）。`RolePal.Options.youngPattern`（`ypat=`、IN の後の young の枠ごとに 1 文字、
+  `A` は完全な歩、`N` は確保しない歩）と `oldPattern`（`opat=`）で並べる。領域はバスなしで確保できる層だけになる（10 のうち 5 で枝は約
+  60 % と見積もった）。`CapSuite` は、N の層が完全な歩ならセルをしまうところでちょうど止まり、それ以外では完全な歩と同じに動くこと、
+  コード化が N の枠をインタプリタと同じ言語にコンパイルすることを確かめる。
+
+**どの並びもレートで落ちる**（実測、`pool-grid 128 … beta=13/32 every=1025`、§3e のフラグ）：
+
+| 機械 | IN の後の young の並び | 結果 |
+|---|---|---|
+| 11/4 | `ANANANANAN`、`ANANAANANA`、`ANAAANAANA`（10 のうち 5〜7 が確保） | n 180 で false（最初の A の命、h 128） |
+| 12/4 | `NANANANANAN`、`ANANANANANA` | n 180 で false |
+| 13/4 | `NANANANNANAN`、`ANANANANANAN`（12 のうち 6） | n 180 で false |
+| 11/4、old `ANN`・`NAN` / `NNA`・`NNN` | （young は完全） | n 211 / 205 で false |
+
+理由を 2 段で（`cap-trace`、`young-alloc`、実測）：
+
+- **young が最初の答えに遅れる。** `b a^178 b` で 13/4 の機械は、128 文字の構築を 1 tick に 7 つずつ進め（tick 128〜145、N の枠はすべて止まる）、
+  構築の終わりの pop の連鎖に tick 146〜163 を使い、そこでも N の枠はすべて止まる。照合の段の FIFO の反転と不一致でもまた止まる。
+- **young の歩のほとんどがセルをしまう。** 長さ ≤ 400 の 3,283 語で、young の歩の 29.8 % が新しいセルをしまい、8.7 % はしまわずに動き、
+  61.5 % は何もしない。働く歩の 77 % が確保し、確保のある tick の半分では 11 の young の歩すべてがセルをしまう。gap 照合器の構造は永続的
+  で、構築は entry と rear のセルとリストか K のノードを作り、gap を展開する pop は K ノードを積み、反転はリストのセルを 1 つずつ作り直し、
+  FIFO の反転はキューのセルを作る。タダなのは `popL`、`takePop` と速い照合だけ。old は歩の 92.8 % が何もしないが、引き継ぎの後の山で 4 歩
+  すべてが要る。
+
+だからこの照合器では、セルをしまいうる young の 11 歩が床で、読みの分岐もそこで止まる。分岐をさらに減らすには、pop が確保しない照合器
+（たとえば gap を新しいリストや K ノードでなく、entry を指すカーソルで展開する）が要る。それは `GapKmp` の作り直しで、ここではやっていない。
+
+ほかの角度（実測）：
+
+- **W₀ 64**（`S` のフォールバックが 24,610 から 7,375 ノードに縮む。compact 3,474 規則、125,760 ノード）：×2.63 で 330,035 ノードの 997 規則、
+  §3f より 5.7 % 小さく、全長さ ≤ 1,025 も通る。だが長さ 104 の乱数回文（種 7）で、h 64 の A が n 104 に遅れる（`endonce` の有無によらない）。
+  β 27/64 は W₀ ≥ 128 が要る。採らない。
+- **young 10 にまとめ全部**（`merge2` と `merge3`）は β 27/64 で全長さ ≤ 1,025 を通る（13/32 と `merge2` だけでは落ちる）が、文法は大きい：
+  ×2.4 で 397,451 ノードの 1,108 規則（compact 3,823 規則、165,620 ノード）。
+- **命名の回**（`peg-cse-improve` の k 30〜240、閾値 300〜3,000、20 回）は、同じ約 349,800 ノードの 996 規則で終わる。
+
+3 つの機械の反例（104、180、211 文字）は `src/test/resources/anchors-counterexamples.txt` にあり、選んだ機械はすべて正しく答える。現在の
+最良は §3f のまま。
+
+再現（`research/` から）：
+
+```sh
+sbt "run pool-grid 128 3 3 3 0 3 11 beta=13/32 every=1025 r13/4:noacc,fuse,compact,endent,endonce,unfold,tmp,lgap,merge2,noG,noR,ypat=ANANANANANAN"
+sbt "run cap-trace 13 128 b1a178b noacc fuse compact endent endonce unfold tmp lgap merge2 noG noR beta=13/32 ypat=ANANANANANAN"
+sbt "run young-alloc 11 128 400 noacc fuse compact endent endonce unfold tmp lgap merge2 noG noR beta=13/32"   # old を足すと old 役
+```
+
 ## 4. handoff のほかの路線（この数字で見直し）
 
 - **最悪 O(1) の連結可能デック（handoff §4.4）**：レートを決めるのは乱数回文での仕事の総量（スループット）で、pop の突発では

@@ -93,10 +93,12 @@ class AnchorSchedSuite extends munit.FunSuite {
 
   test("every counterexample is a palindrome, fails its configuration (the POOLS machine of main included), and the chosen machines answer it") {
     val cs = counterexamples
-    assertEquals(cs.size, 15)
+    assertEquals(cs.size, 18)
     val fin = chosen
     val fin3c = chosen3c
     val b1332 = OverlapPal.Sched(13, 32)
+    /** the machine of §3e (and §3f) */
+    val levers = a.copy(unfold = true, mergeTmp = true, lgap = true, merge2 = true, m2off = Set("G", "R"), sched = b1332)
     val failing: Map[String, () => Lps.Machine] = Map(
       "role 15/4 A, beta 1/2, W0 32" -> (() => RolePal.machine(15, 4, 32, a)),
       "role 13/4 A, beta 7/16, W0 32" -> (() => RolePal.machine(13, 4, 32, a.copy(sched = b716))),
@@ -114,7 +116,11 @@ class AnchorSchedSuite extends munit.FunSuite {
         (() => RolePal.machine(11, 4, 128, a.copy(unfold = true, mergeTmp = true, lgap = true, merge2 = true, m2off = Set("R"), sched = b716))),
       "role 12/3 A unfold tmp lgap, beta 7/16, W0 128" -> (() => RolePal.machine(12, 3, 128, a.copy(unfold = true, mergeTmp = true, lgap = true, sched = b716))),
       "role 10/4 A unfold tmp lgap merge2, beta 7/16, W0 128" ->
-        (() => RolePal.machine(10, 4, 128, a.copy(unfold = true, mergeTmp = true, lgap = true, merge2 = true, sched = b716))))
+        (() => RolePal.machine(10, 4, 128, a.copy(unfold = true, mergeTmp = true, lgap = true, merge2 = true, sched = b716))),
+      "role 11/4 A unfold tmp lgap merge2 noG noR, beta 13/32, W0 64" -> (() => RolePal.machine(11, 4, 64, levers)),
+      "role 13/4 A unfold tmp lgap merge2 noG noR ypat=ANANANANANAN, beta 13/32, W0 128" ->
+        (() => RolePal.machine(13, 4, 128, levers.copy(youngPattern = "ANANANANANAN"))),
+      "role 11/4 A unfold tmp lgap merge2 noG noR opat=NAN, beta 13/32, W0 128" -> (() => RolePal.machine(11, 4, 128, levers.copy(oldPattern = "NAN"))))
     for ((cfg, w) <- cs) {
       assert(LpsPal.isPal(w), cfg)
       val key = cfg.takeWhile(_ != '(').trim

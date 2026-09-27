@@ -294,3 +294,13 @@ domain and kinds are checked after every slot), points-to domains (`PointsTo`, a
 machine does not change, so the rates stand: 996 rules at 349,849 nodes (×2.45), 1.54 MB, 20 % below §3e. What remains is one
 arm per young layer, and it is inherent: `alloc-profile` finds ticks in which every site of a tag keeps a cell, so no
 re-addressing of the cells branches less; only a machine that caps the cells kept per tick could.
+
+## 16. Capping the cells of a tick (2026-09-27, `STRATEGY.md` §3g)
+
+Capping the cells a tick may keep was the structural step §3f pointed at. Naming cells by their rank within the tick costs a
+bus per (rank, site, field) that eats what the reads save; fixing which young layers may allocate needs no bus and was built
+(`noAlloc`, `ypat=`), with a test that an N layer stalls exactly where the full step would store a cell. Every pattern fails
+the first answer: the gap matcher allocates in 77 % of its working steps — builds, the unfolds and reversals of its pops, the
+FIFO — because its structures are persistent, so eleven allocating young steps are the floor. W₀ 64 would save 5.7 % but is
+late on a 104-letter palindrome; young 10 with every merge passes but is larger. The next real cut needs a matcher whose pops
+do not allocate.

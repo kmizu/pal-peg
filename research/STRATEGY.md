@@ -542,6 +542,68 @@ sbt "run lps-code export role 11 4 128 C.peg noacc fuse compact endent endonce s
     "run peg-cse-improve C.peg 2.45 65536 60 1000 10 out.peg out.json"
 ```
 
+## 3g. Capping the cells a tick may keep (2026-09-27)
+
+§3f left one arm per young layer: a young cell can be born at any of the 11 young layers, and every read of a young pointer
+branches over them. The next step was a machine that caps the cells a tick may keep. Two ways were weighed:
+
+- **Rank addressing** (a per-tick allocation counter; a cell named by its tick and its rank among the tick's allocations). A
+  read branches over the K ranks, but finding the layer of rank k moves into shared bus rules, one per (rank, site, field).
+  Estimated on the §3f compact grammar's dispatches: arms 99 % of today at K = 6, 87 % at 5; a gain only at K ≤ 4, below the
+  catch-up rate of 2/β ≈ 4.9 letters per tick. Not built.
+- **Fixed allocating layers** (built). `GapKmp.Core(noAlloc = true)` has no allocation site; in place of every branch that
+  would store a new cell it has a stall (an empty body: the exclusive guards keep every later branch out). `RolePal.Options.
+  youngPattern` (`ypat=`, one letter per young slot after IN: `A` the full step, `N` the non-allocating one) and `oldPattern`
+  (`opat=`) place them. Domains shrink to the allocating layers with no bus (arms estimated at 60 % with 5 of 10). `CapSuite`
+  checks that an N layer stalls exactly where the full step would store a cell and otherwise acts as the full step, and that
+  the code backend compiles N slots to the interpreter's language.
+
+**Every pattern fails the rates** (measured, `pool-grid 128 … beta=13/32 every=1025`, the §3e flags):
+
+| machine | young pattern after IN | result |
+|---|---|---|
+| 11/4 | `ANANANANAN`, `ANANAANANA`, `ANAAANAANA` (5–7 of 10 allocating) | false at n 180 (the first A life, h 128) |
+| 12/4 | `NANANANANAN`, `ANANANANANA` | false at n 180 |
+| 13/4 | `NANANANNANAN`, `ANANANANANAN` (6 of 12) | false at n 180 |
+| 11/4, old `ANN`, `NAN` / `NNA`, `NNN` | (the young full) | false at n 211 / 205 |
+
+Why, two levels down (`cap-trace`, `young-alloc`, measured):
+
+- **The young role is late at its first answer.** On `b a^178 b` the 13/4 machine builds its 128 letters at seven per tick
+  (ticks 128–145, every N slot stalls), then spends ticks 146–163 in the pop cascade that ends the build, where every N slot
+  stalls again, and the FIFO reversals and mismatches of the match phase stall it once more.
+- **Almost every young step stores a cell.** Over 3,283 words ≤ 400, 29.8 % of the young steps store a new cell, 8.7 % act
+  without one, 61.5 % idle: 77 % of the working steps allocate, and in half of the ticks with any, all 11 young steps store a
+  cell. The gap matcher's structures are persistent: a build makes an entry, a rear cell and a list or K node; a pop that
+  unfolds a gap pushes a K node; a reversal rebuilds a list cell by cell; a FIFO reversal makes a queue cell. Only `popL`,
+  `takePop` and the fast matches are free. The old role idles 92.8 % of its steps, but its bursts after a handover need all
+  four steps.
+
+So with this matcher, 11 young steps that may store a cell are the floor, and the branching of a read with them. A smaller
+fan-out needs a matcher whose pops do not allocate — for example unfolding a gap through cursors into the entries instead of
+new list and K nodes — which is a redesign of `GapKmp`, not taken here.
+
+Other angles, measured:
+
+- **W₀ 64** (the fallback in `S` shrinks from 24,610 to 7,375 nodes; compact 3,474 rules, 125,760 nodes): 997 rules at 330,035
+  nodes (×2.63), 5.7 % below §3f, and it passes every length ≤ 1,025. But a random palindrome of length 104 (seed 7) finds bank
+  A of h 64 late at n 104, with or without `endonce`; β 27/64 needs W₀ ≥ 128. Not adopted.
+- **Young 10 with every merge** (`merge2` and `merge3`) passes every length ≤ 1,025 at β 27/64 (it fails at 13/32, and with
+  `merge2` alone), but its grammar is larger: 1,108 rules at 397,451 nodes at ×2.4 (compact 3,823 rules, 165,620 nodes).
+- **The naming rounds** (`peg-cse-improve` with k 30–240, thresholds 300–3,000, 20 rounds) end at the same 996 rules at
+  about 349,800 nodes.
+
+The three machines' counterexamples (104, 180 and 211 letters) are in `src/test/resources/anchors-counterexamples.txt`;
+every chosen machine answers them. The current best stays §3f.
+
+Reproduce (from `research/`):
+
+```sh
+sbt "run pool-grid 128 3 3 3 0 3 11 beta=13/32 every=1025 r13/4:noacc,fuse,compact,endent,endonce,unfold,tmp,lgap,merge2,noG,noR,ypat=ANANANANANAN"
+sbt "run cap-trace 13 128 b1a178b noacc fuse compact endent endonce unfold tmp lgap merge2 noG noR beta=13/32 ypat=ANANANANANAN"
+sbt "run young-alloc 11 128 400 noacc fuse compact endent endonce unfold tmp lgap merge2 noG noR beta=13/32"   # add old for the old role
+```
+
 ## 4. The handoff's other routes, re-evaluated with these numbers
 
 - **Worst-case catenable deques (§4.4 of the handoff).** The rate is set by accumulated work on random palindromes

@@ -33,9 +33,17 @@ object RolePal {
   final case class Options(youngReport: Boolean = true, mergeTmp: Boolean = false, fuseIn: Boolean = false, compact: Boolean = false,
                            sharedRK: Boolean = false, endAsEntry: Boolean = false, endOnce: Boolean = false, rearInP3: Boolean = false,
                            sched: OverlapPal.Sched = OverlapPal.Half, unfold: Boolean = false, pairs: Boolean = false, lgap: Boolean = false,
-                           merge2: Boolean = false, merge3: Boolean = false, m2off: Set[String] = Set()) {
+                           merge2: Boolean = false, merge3: Boolean = false, m2off: Set[String] = Set(), youngPattern: String = "",
+                           oldPattern: String = "") {
     require(!endOnce || compact, "endOnce needs the compact states")
+    require(youngPattern.forall(c => c == 'A' || c == 'N'), "youngPattern: A (a full young step) or N (a non-allocating one) per YU slot")
+    require(youngPattern.isEmpty || (fuseIn && compact && !pairs), "youngPattern needs fuseIn and the compact states, and no pairs")
+    require(oldPattern.forall(c => c == 'A' || c == 'N'), "oldPattern: A (a full old step) or N (a non-allocating one) per OU slot")
+    require(oldPattern.isEmpty || (fuseIn && compact && !pairs), "oldPattern needs fuseIn and the compact states, and no pairs")
   }
+  /** `ypat=<A/N letters>` among the role flags (STRATEGY.md §3g): one letter per young slot after IN, A = the full step (`YU`),
+    * N = the non-allocating step (`YN`), which stalls on every branch that would store a new cell */
+  def patternOf(flags: Iterable[String], key: String = "ypat"): String = flags.collectFirst { case f if f.startsWith(s"$key=") => f.drop(key.length + 1) }.getOrElse("")
   /** the registers and bits the handover copies from the young role to the old one */
   def copiedRegs(o: Options = Options()): Vector[String] =
     Vector("cur", "L", "K", "R") ++ (if (o.mergeTmp) { Vector("tmp") } else { Vector("rv", "ks") }) ++ Vector("end", "pendF", "pendB", "pendN")
@@ -49,12 +57,15 @@ object RolePal {
     def n(x: String): String = px + x
     val report: Boolean = !young || opts.youngReport
     val tags: GapKmp.Tags = tagsOf(opts)
-    private def mk(endStep: Boolean) = new GapKmp.Core(M, tags, GapKmp.Feed(n("src"), n("rc"), n("pendF"), n("pendB"), n("pendN"), n("rev")),
+    private def mk(endStep: Boolean, noAlloc: Boolean = false) = new GapKmp.Core(M, tags, GapKmp.Feed(n("src"), n("rc"), n("pendF"), n("pendB"), n("pendN"), n("rev")),
       matchOnly = !young, report = report, mergeTmp = opts.mergeTmp, compact = opts.compact, sharedRK = opts.sharedRK,
-      endAsEntry = opts.endAsEntry, endStep = endStep, unfold = opts.unfold, lgap = opts.lgap, merge2 = opts.merge2, merge3 = opts.merge3, m2off = opts.m2off)
+      endAsEntry = opts.endAsEntry, endStep = endStep, unfold = opts.unfold, lgap = opts.lgap, merge2 = opts.merge2, merge3 = opts.merge3, m2off = opts.m2off,
+      noAlloc = noAlloc)
     val core = mk(endStep = true)
     /** `endOnce`: the steps after the first young step of a tick leave the end of the build to the next tick's first step */
     val coreRest = if (young && opts.endOnce) { mk(endStep = false) } else { core }
+    /** the non-allocating form of `coreRest` (slot `YN`) */
+    lazy val coreNoAlloc = mk(endStep = !(young && opts.endOnce), noAlloc = true)
     val regs: Vector[(String, Set[K])] = core.regs ++
       (if (young) { Vector(n("src") -> Set[K](KInp), n("rc") -> Set[K](KInp)) } else { Vector() }) ++
       Vector("pendF", "pendB", "pendN").map(q => n(q) -> Set[K](KTag(tags.IQC)))
@@ -124,16 +135,24 @@ object RolePal {
     // order of an old and a young step does not matter)
     val in1 = if (opts.fuseIn) { Lpm.fuse(Lpm.fuse(in, ou), yu) } else { in }
     // with endOnce the first young step of a tick (fused into IN, or the slot YUF) is the only one that ends a build
-    val slots = Map("CT" -> OverlapPal.ct(minAnchor, opts.sched).build(names, bits), "IN" -> in1, "YUF" -> yu, "YU" -> yuRest, "OU" -> ou,
+    lazy val yn = y.coreNoAlloc.universal(_ => ()).build(names, bits)
+    lazy val on = o.coreNoAlloc.universal(_ => ()).build(names, bits)
+    val slots0 = Map("CT" -> OverlapPal.ct(minAnchor, opts.sched).build(names, bits), "IN" -> in1, "YUF" -> yu, "YU" -> yuRest, "OU" -> ou,
       "YU2" -> Lpm.fuse(yuRest, yuRest), "OU2" -> Lpm.fuse(ou, ou),
       "OUT" -> OverlapPal.outOf(Bit("o_acc")).build(names, bits))
-    val youngSlots0 = if (opts.fuseIn) { Vector.fill(ky - 1)("YU") } else if (opts.endOnce) { Vector("YUF") ++ Vector.fill(ky - 1)("YU") } else { Vector.fill(ky)("YU") }
+    val slots = slots0 ++ (if (opts.youngPattern.contains('N')) { Map("YN" -> yn) } else { Map() }) ++
+      (if (opts.oldPattern.contains('N')) { Map("ON" -> on) } else { Map() })
+    require(opts.youngPattern.isEmpty || opts.youngPattern.length == ky - 1, s"youngPattern needs ${ky - 1} letters (the young slots after IN)")
+    val youngSlots0 = if (opts.youngPattern.nonEmpty) { opts.youngPattern.map(c => if (c == 'A') { "YU" } else { "YN" }).toVector }
+      else if (opts.fuseIn) { Vector.fill(ky - 1)("YU") } else if (opts.endOnce) { Vector("YUF") ++ Vector.fill(ky - 1)("YU") } else { Vector.fill(ky)("YU") }
     val no = if (opts.fuseIn) { ko - 1 } else { ko }
     // pairs (STRATEGY.md §3e): two consecutive steps of a role in one slot (Lpm.fuse, as IN fuses its steps): the same machine,
     // with half the intermediate register values
     def paired(v: Vector[String], one: String, two: String): Vector[String] = { val k = v.count(_ == one); v.filterNot(_ == one) ++ Vector.fill(k / 2)(two) ++ Vector.fill(k % 2)(one) }
     val youngSlots = if (opts.pairs) { paired(youngSlots0, "YU", "YU2") } else { youngSlots0 }
-    val oldSlots = if (opts.pairs) { paired(Vector.fill(no)("OU"), "OU", "OU2") } else { Vector.fill(no)("OU") }
+    require(opts.oldPattern.isEmpty || opts.oldPattern.length == no, s"oldPattern needs $no letters (the old slots after IN)")
+    val oldSlots = if (opts.oldPattern.nonEmpty) { opts.oldPattern.map(c => if (c == 'A') { "OU" } else { "ON" }).toVector }
+      else if (opts.pairs) { paired(Vector.fill(no)("OU"), "OU", "OU2") } else { Vector.fill(no)("OU") }
     val schedule = Vector("CT", "IN") ++ youngSlots ++ oldSlots ++ Vector("OUT")
     Lps.Machine("ab", regs, bits, if (opts.compact) { Set("out") } else { Set("out", "y_p0", "y_p2", "o_p0", "o_p2") }, "out", tagsOf(opts).schema,
       schedule, slots.filter { case (k, _) => schedule.contains(k) })

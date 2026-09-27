@@ -84,3 +84,17 @@ The §3e machine; `peg-cse-improve C.peg <x> 65536 60 1000 10`:
 | `sound pts` | | 2.56 | 984 | 365,203 | 1,582,784 |
 | `sound pts` | | 2.8 | 949 | 399,416 | 1,730,216 |
 | `sound pts` | | 3.0 | 933 | 428,580 | 1,856,960 |
+
+## §3g (2026-09-27): capping the cells of a tick, measured
+
+Grammars of the configurations that were measured (`peg-cse-improve <x> 65536 60 1000 10`, sound pts); none replaced §3f:
+
+| machine | compact rules / nodes / colours | x | rules | rhs nodes | bytes | rates |
+|---|---|---:|---:|---:|---:|---|
+| §3f (11/4 `lgap` U, β 13/32, W₀ 128) | 3,521 / 143,051 / 22 | 2.45 | 996 | 349,849 | 1,542,201 | pass |
+| same at W₀ 64 | 3,474 / 125,760 / 22 | 2.63 | 997 | 330,035 | 1,502,265 | false at n 104 (seed 7) |
+| same at W₀ 64 | | 2.7 | 990 | 338,974 | 1,521,178 | |
+| 10/4 `lgap` `merge2` `merge3`, β 27/64 | 3,823 / 165,620 / 20 | 2.4 | 1,108 | 397,451 | 1,697,593 | every ≤ 1,025 pass |
+
+Allocation (`young-alloc 11 128 400 …`, 3,283 words): young steps 29.8 % storing a cell, 8.7 % acting without one, 61.5 %
+idle; ticks with any storing step: 11 of 11 in 50.2 %, 10 in 17.2 %. Old role: 1.9 % / 5.3 % / 92.8 %.
