@@ -108,3 +108,12 @@ idle; ticks with any storing step: 11 of 11 in 50.2 %, 10 in 17.2 %. Old role: 1
 | 11/4 | NANANNANAN, ANANANANAN, ANANAANANA, ANAAANAANA, AANAAAANAA, AAAAANAAAA | false at n 180, 180, 180, 180, 187, 362 |
 | 12/4 | NANANANANAN, ANAANANAANA / ANAAANAAANA | false at n 180, 360 / pass (7,158 words) |
 | 13/4 | NANANANNANAN / ANANAANANANA, ANAANAANAANA | false at n 180 / pass, pass |
+
+## §3j (2026-09-28): arms by kind and the burst profile
+
+Arms of the §3f compact grammar by the kind of cell read: K 33.1 %, list 20.4 %, tag tests 18.6 %, register leaves 10.0 %, R 9.6 %,
+entry 6.4 %, queue 1.9 %.
+
+`kind-profile 11 128 400 noacc fuse compact endent endonce unfold tmp lgap merge2 noG noR beta=13/32` (3,283 words, 271,117 ticks
+with young work): per tick list 5.63 / p95 11 / max 11, K 1.81 / 11 / 11, R 1.91 / 9 / 11, entry 2.98 / 11 / 11, queue 3.40 / 12 / 12;
+longest runs (p99 / max) list 172 / 508, K 60 / 254, R 34 / 255, entry 128 / 360, queue 60 / 208; busy width 11 in 84.2 % of the ticks.

@@ -678,6 +678,38 @@ cannot do it (its pops allocate); a design that can is open.
 after the STOC 1976 real-time string matching), Slisenko's recognizer (41 tapes, 20 after Seiferas–Galil's multihead simulation).
 The papers themselves were not reachable here (publisher 403).
 
+## 3j. Few sites per kind: where the headroom really is (2026-09-28)
+
+§3i put the target in sites: k cells of one kind born in one tick force k arms. Before designing for it, two measurements.
+
+**Which kinds the arms read** (the §3f compact grammar, arms by the kind of the cell read, measured): K nodes 33.1 %, list nodes
+20.4 %, tag tests on list nodes 18.6 %, register leaves (mostly `cur.p1`, entries) 10.0 %, R nodes 9.6 %, entries 6.4 %, queue
+cells 1.9 %. The live sequence (list, K, R and their tag tests) takes about 82 %, the entries about 16 %: a pipelined build that
+made only about 1/β ≈ 2.5 entries a tick would reach at most the 16 %.
+
+**How bursty each kind is** (`kind-profile 11 128 400 …`: the young role's new cells by kind, per tick with young work; 3,283
+words, 271,117 ticks; measured):
+
+| kind | mean per tick | p95 | max | longest run of consecutive steps making it (p99 / max) |
+|---|---:|---:|---:|---:|
+| list | 5.63 | 11 | 11 | 172 / 508 |
+| K | 1.81 | 11 | 11 | 60 / 254 |
+| R | 1.91 | 9 | 11 | 34 / 255 |
+| entry | 2.98 | 11 | 11 | 128 / 360 |
+| queue | 3.40 | 12 | 12 | 60 / 208 |
+
+In 84.2 % of the ticks with young work all 11 young steps are busy. By the phase a step starts in, most list and K cells come from
+the build's pops and most entries, rear cells and queue cells from the build itself.
+
+**The headroom, and why it is not reachable here.** If every kind's sites fell to its mean (list 6, K 2, R 2, entries 3, queue 4),
+the arms would be about 34 % of today's (estimate) — the user's "about four times" is there in principle. But at the 95th
+percentile every kind already needs all eleven steps, and the runs are long: a single cascade makes list nodes in up to 508
+consecutive steps (about 46 ticks), the build makes entries in up to 360. The young windows are full (84 % saturated ticks), so a
+restriction of any kind below the layer count delays these runs past the first answer — the gate of this step; no restriction was
+tried beyond §3g–§3h, which already fail. Spreading the cells needs a matcher with bounded runs: a pipelined, de-amortised young
+role in which a letter's build and match take a bounded number of steps of each kind. The table above is what it would have to
+absorb; no such design yet. The current best stays §3f.
+
 ## 4. The handoff's other routes, re-evaluated with these numbers
 
 - **Worst-case catenable deques (§4.4 of the handoff).** The rate is set by accumulated work on random palindromes

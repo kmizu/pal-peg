@@ -321,3 +321,11 @@ the same way, and overlapping candidates need a re-read or a jump back; a mirror
 changed is the target: steps to newer data cost cells, and cells are cheap when born at fixed sites; the branching of a read is the
 number of sites. For anchors the floor is about 1/β ≈ 2.5 entries a tick if the build and the match were pipelined, against 11
 allocating layers now. No such design yet.
+
+## 19. Where the headroom of sites really is (2026-09-28, `STRATEGY.md` §3j)
+
+Measured before designing: 82 % of the arms read the live sequence (list, K, R nodes and tag tests), 16 % entries. Per tick the
+young role makes on average 5.6 list, 1.8 K, 1.9 R, 3.0 entry and 3.4 queue cells, so sites at the means would leave about a third
+of the arms; but every kind hits all eleven steps at the 95th percentile, cascades run up to 508 consecutive list-making steps, and
+84 % of busy ticks are saturated. The headroom needs a matcher whose runs are bounded — a pipelined, de-amortised young role —
+which does not exist yet; the burst table is its specification.

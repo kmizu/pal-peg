@@ -414,6 +414,75 @@ object Main {
           "rounds" -> trace.map { case (n, nodes, p) => s"$n/$nodes/$p" }.mkString(" "), "sha256_uncompressed" -> sha))
         java.nio.file.Files.write(java.nio.file.Paths.get(outJson), json.getBytes("UTF-8"))
       }
+    case "kind-profile" :: kyS :: w0S :: maxS :: rest0 =>
+      // kind-profile <ky> <W0> <maxLen> [role flags] [beta=..] (STRATEGY.md §3j): the young role's new cells by kind (list, K, R,
+      // entry, queue) and by the phase the step started in; per tick with young work: the cells of each kind (mean, 95th percentile,
+      // max), the longest run of consecutive young steps storing the same kind, and the busy width (young steps that changed state)
+      val sc = OverlapPal.schedArg(rest0)
+      val ro = RolePal.Options(youngPattern = RolePal.patternOf(rest0), youngReport = !rest0.contains("noacc"), fuseIn = rest0.contains("fuse"),
+        compact = rest0.contains("compact"), endAsEntry = rest0.contains("endent"), endOnce = rest0.contains("endonce"), sched = sc,
+        unfold = rest0.contains("unfold"), mergeTmp = rest0.contains("tmp"), lgap = rest0.contains("lgap"), merge2 = rest0.contains("merge2"),
+        merge3 = rest0.contains("merge3"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => rest0.contains(s"no$x")))
+      val m = RolePal.machine(kyS.toInt, 4, w0S.toInt, ro)
+      val maxLen = maxS.toInt
+      val words = OverlapProfile.switchWords(maxLen, sc) ++ OverlapProfile.adversarialWords(maxLen, sc).take(150) ++ OverlapProfile.everyLengthWords(maxLen)
+      val tg = RolePal.tagsOf(ro)
+      def kindOf(tag: Int): String =
+        if (tag == tg.LNODE || tag == tg.GNODE) { "list" } else if (tag == tg.KNODE) { "K" } else if (tag == tg.RNODE) { "R" }
+        else if (tag == tg.ENTRY || tag == tg.END) { "entry" } else if (tag == tg.IQC) { "queue" } else { "other" }
+      val kinds = Vector("list", "K", "R", "entry", "queue")
+      val young = m.regs.map(_._1).filter(_.startsWith("y_"))
+      val perTick = scala.collection.mutable.HashMap.empty[String, scala.collection.mutable.ArrayBuffer[Int]]
+      kinds.foreach(k => perTick(k) = scala.collection.mutable.ArrayBuffer.empty[Int])
+      val byPhase = scala.collection.mutable.HashMap.empty[(String, String), Long].withDefaultValue(0L)
+      val longestRun = scala.collection.mutable.HashMap.empty[String, Int].withDefaultValue(0)
+      val runLengths = scala.collection.mutable.HashMap.empty[String, scala.collection.mutable.ArrayBuffer[Int]]
+      kinds.foreach(k => runLengths(k) = scala.collection.mutable.ArrayBuffer.empty[Int])
+      val busyWidth = scala.collection.mutable.HashMap.empty[Int, Long].withDefaultValue(0L)
+      def phaseOf(st: Lpm.State): String = {
+        val q2 = st.bits("y_q2"); val q1 = st.bits("y_q1"); val q0 = st.bits("y_q0")
+        (if (q2) "match" else "build") + (if (q1 || q0) "-pop" else "")
+      }
+      for (w <- words) {
+        var pre: Lpm.State = Lpm.State(Map.empty, m.initTrue)
+        val count = scala.collection.mutable.HashMap.empty[String, Int].withDefaultValue(0)
+        var busy = 0
+        var layer = 0
+        val run = scala.collection.mutable.HashMap.empty[String, Int].withDefaultValue(0)
+        def closeRun(k: String): Unit = { val r = run(k); if (r > 0) { runLengths(k) += r; if (r > longestRun(k)) { longestRun(k) = r } }; run(k) = 0 }
+        Lps.traceSlots(m, w) { (tick, slot, st) =>
+          if (slot == "CT") { count.clear(); busy = 0; layer = 0 }
+          layer += 1
+          if (slot == "IN" || slot == "YU" || slot == "YN") {
+            // the cells made at this layer that the young registers now reach (through fields of such cells too)
+            val seen = scala.collection.mutable.HashSet.empty[Lpm.RCell]
+            def visit(c: Lpm.RCell): Unit = if (c != null && c.tick == tick && c.layer == layer && c.tag > m.alphabet.length && !seen.contains(c)) { seen += c; (1 to 4).foreach(f => visit(c.fld(f))) }
+            young.foreach { r => val c = st.regs.getOrElse(r, null); if (!(pre.regs.getOrElse(r, null) eq c)) { visit(c) } }
+            val made = seen.toVector.map(c => kindOf(c.tag))
+            val changed = young.exists(r => !(pre.regs.getOrElse(r, null) eq st.regs.getOrElse(r, null))) || pre.bits.filter(_.startsWith("y_")) != st.bits.filter(_.startsWith("y_"))
+            if (changed) { busy += 1 }
+            val ph = phaseOf(pre)
+            made.foreach { k => count(k) += 1; byPhase((ph, k)) += 1 }
+            // runs, per kind: consecutive young steps that each make a cell of that kind
+            for (k <- kinds) { if (made.contains(k)) { run(k) += 1 } else { closeRun(k) } }
+          }
+          if (slot == "OUT") { if (busy > 0) { kinds.foreach(k => perTick(k) += count(k)); busyWidth(busy) += 1 } }
+          pre = st
+        }
+        kinds.foreach(closeRun)
+      }
+      def pct(v: scala.collection.mutable.ArrayBuffer[Int], p: Double): Int = { val s = v.sorted; if (s.isEmpty) 0 else s(math.min(s.size - 1, (p * s.size).toInt)) }
+      val ticks = perTick("list").size
+      println(s"kind-profile ${kyS}/4 W0 $w0S, ${words.size} words <= $maxLen, $ticks ticks with young work")
+      for (k <- kinds) {
+        val v = perTick(k)
+        val mean = v.sum.toDouble / math.max(ticks, 1)
+        val rl = runLengths(k)
+        println(f"  $k%-6s per busy tick: mean $mean%.2f, p95 ${pct(v, 0.95)}%d, p99 ${pct(v, 0.99)}%d, max ${v.max}%d; runs: mean ${rl.sum.toDouble / math.max(rl.size, 1)}%.1f, p99 ${pct(rl, 0.99)}%d, max ${longestRun(k)}%d")
+      }
+      println("  new cells by the phase the step started in: " + byPhase.toVector.sortBy(x => (x._1._1, x._1._2)).map { case ((ph, k), n) => s"$ph/$k:$n" }.mkString(" "))
+      val bt = busyWidth.values.sum.toDouble
+      println("  busy young steps per tick (ticks with any): " + busyWidth.toVector.sortBy(_._1).map { case (k, n) => f"$k:${100 * n / bt}%.1f%%" }.mkString(" "))
     case "young-alloc" :: kyS :: w0S :: maxS :: rest0 =>
       // young-alloc <ky> <W0> <maxLen> [role flags] [beta=..] (STRATEGY.md §3g): over the switch, adversarial and every-length words,
       // the young steps (IN's and the YU slots') that store a new cell, that act without one, and that do nothing; and per tick the
