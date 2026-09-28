@@ -414,6 +414,13 @@ object Main {
           "rounds" -> trace.map { case (n, nodes, p) => s"$n/$nodes/$p" }.mkString(" "), "sha256_uncompressed" -> sha))
         java.nio.file.Files.write(java.nio.file.Paths.get(outJson), json.getBytes("UTF-8"))
       }
+    case "rt-kmp" :: w0S :: maxS :: bS :: mS :: rest0 =>
+      // rt-kmp <W0> <maxLen> <builder letters per young tick> <matcher letters per young tick> [beta=..] (STRATEGY.md §3l): the
+      // de-amortised matcher (Kaplan–Tarjan steques) on the banks of the switch, adversarial and every-length words
+      val sc = OverlapPal.schedArg(rest0)
+      val maxLen = maxS.toInt
+      val words = OverlapProfile.switchWords(maxLen, sc) ++ OverlapProfile.adversarialWords(maxLen, sc).take(150) ++ OverlapProfile.everyLengthWords(maxLen)
+      print(RtKmpProbe.run(words, w0S.toInt, sc, bS.toInt, mS.toInt))
     case "life-work" :: kyS :: w0S :: maxS :: rest0 =>
       // life-work <ky> <W0> <maxLen> [role flags] [beta=..] (STRATEGY.md §3k): per life of the young role (a birth to the next one),
       // its busy steps and the cells they make by kind, on the build side and on the match side (the q2 bit), per tick of the life.

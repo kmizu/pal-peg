@@ -340,3 +340,25 @@ slots today. Pipelining pays only if the work per letter drops to about one step
 open question. Queuing each pending bank's text at IN (taking the FIFO reversal out of the young role) is a smaller separate lever.
 The arms go as r L² (layers L, reads per layer r); one fat step per letter would need about 5 young layers, which pays
 if r grows less than about 4.8 times.
+
+## 21. The de-amortised young role, built and measured (2026-09-28, `STRATEGY.md` §3l)
+
+`RtSteque` (Kaplan–Tarjan real-time catenable steques, JACM 1999 §5, with the stack-of-substacks pointers) and `RtKmp` (the
+KMP automaton built on the pattern, one transition per text letter) give a young role without amortisation: at most 5 steque
+operations per builder letter, 3 per matcher letter, and a bounded number of cells for each (68 and 41 at most, unchanged from
+length 64 to 2,048 and on the banks up to length 1,000). It is correct on every bank of the families (3,002 banks to length 400,
+21,267 to 1,000; three builder and three matcher letters a young tick are enough, two are not). It costs about 77 cells a young
+tick (199 at most, up to 77 of one kind) against today's 16 (11 of a kind at most): the bursts are gone because every letter pays
+the worst case. So the forward sequences cannot be kept for well under a step per transition; the table is what costs.
+
+Why a table forces this. With cells that point only to older cells, the per-position data of the automaton (built in index
+order) cannot link forward; a matcher at state j needs j + 1 next and other(j) after a mismatch. A static layout fails on the
+cycles: a list built in reverse gives "next" but not the jump; a list in index order gives the jump but not "next"; carrying a
+handle of each kind loses the other after one move of the other kind, and alternating generations only postpone the loss by one
+jump each. The matcher must carry the forward order itself, and a jump prepends a stored range — catenation.
+
+The way out is a matcher without per-position data (Crochemore–Perrin two-way, real time by Breslauer–Grossi–Mignosi): the
+pattern is read forward along the input chain for free, the text as it arrives. Its preprocessing needs position arithmetic
+(the machine has no pointer equality; a counter chain of one cell per step replaces it), and its real-time form needs the
+two-instance construction for patterns whose left part is the longer one (the plain recursion on the left part grows: depth 3,
+4, 5 at lengths 10, 14, 18). Both are open.

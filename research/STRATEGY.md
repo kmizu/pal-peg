@@ -753,6 +753,63 @@ DFA transition and its deque upkeep, would need about 2.5 + 2.5 ≈ 5 layers; it
 (11 / 5)² ≈ 4.8 times today's (estimate). The merges of §3e made steps fatter to save one layer and lost; halving L is a different
 regime. That is the next design question.
 
+## 3l. The de-amortised young role, built and measured (2026-09-28)
+
+§3k left one question: can the forward sequences be kept for well under one extra step per transition? This step builds the
+matcher that answers it.
+
+**The design** (`RtSteque`, `RtKmp`; reference models in plain Scala, not compiled to a PEG). The builder runs the KMP automaton
+on the pattern itself; a builder letter stores entry k with its gap G(k) = [other(k) .. k−1], which is either the builder's
+sequence B (when P[f(k)] ≠ P[k]) or G(f(k)) ++ [f(k)] ++ B, then E_k joins the open sequences and the builder advances (pop) or
+jumps (catenate, pop). A matcher letter is one transition: a pop, or G(j) ++ [j] ++ M then a pop. The sequences are Kaplan and
+Tarjan's real-time catenable steques (JACM 46(5), 1999, §5): prefix, child steque of pairs, suffix; buffers that are stacks
+over Hood–Melville real-time queues; red/yellow/green prefixes with the regularity invariant; and the stack-of-substacks pointers
+(`yc`, `nny`), so a pop repairs the nearest red descendant with O(1) new cells. Every operation touches a bounded number of
+cells; no step waits for a cascade. A builder letter makes at most 5 steque operations, a matcher letter at most 3.
+
+**Checks** (tests): 20 random persistent histories × 2,000 operations agree with lists and keep the invariants
+(`RtStequeSuite`); 400 random pattern/text pairs, built first and pipelined, and periodic and Fibonacci families agree with the
+naive longest-prefix states (`RtKmpSuite`); the most cells a letter stores is the same for patterns of length 64 and 2,048.
+On the banks of the families (`rt-kmp 128 400 3 3 beta=13/32`: 3,283 words, 3,002 banks; the young window builds and matches
+three letters of each kind a tick) there are no wrong answers and no late young windows; up to length 1,000 (21,267 banks) the
+same, with the per-letter maxima unchanged.
+
+**What one letter costs** (cells stored, mean / p95 / max; length ≤ 400, measured; the queue column adds the two kinds'
+figures, so its p95 and max are upper bounds):
+
+| | buffer records | list cells | queue records + rotation states | steque nodes | pairs | entries | total |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| builder letter | 5.7 / 10 / 15 | 7.8 / 13 / 27 | 7.6 / 13 / 22 | 5.3 / 7 / 9 | 0.5 / 1 / 2 | 1 | 27.9 / 41 / 68 |
+| matcher letter | 1.3 / 2 / 9 | 0.7 / 4 / 8 | 1.5 / 4 / 14 | 1.1 / 2 / 7 | 0.01 / 0 / 2 | 0 | 4.6 / 10 / 39 |
+| young tick (3 + 3 letters) | 16.6 / 30 / 49 | 20.0 / 39 / 77 | 22.1 / 38 / 64 | 15.0 / 23 / 32 | 1.2 / 4 / 8 | 2.4 / 3 / 3 | 77.2 / 123 / 199 |
+| old tick | 1.5 / 2 / 9 | 0.8 / 4 / 8 | 1.0 / 4 / 14 | 1.0 / 2 / 7 | 0.01 / 0 / 2 | 0 | 4.3 / 10 / 39 |
+
+**The answer is no.** Today's young role stores about 16 cells a busy tick (§3j: list 5.6, K 1.8, R 1.9, entries 3.0, queue
+3.4) and at most 11 of a kind (one per layer). The de-amortised role stores 77 a tick on average and up to 199, and up to 77 of
+one kind: about five times the cells, and three to seven times the sites per kind that a fixed schedule would need (a layer
+stores at most one cell per tag, so a kind needs at least its per-tick maximum of sites). The fat step of §3k is out of reach:
+one builder letter alone stores up to 68 cells. Most of the cost is the builder (two injects a letter, into its own sequence
+and the matcher's, each a real-time queue step with its rotation) and the steque's bookkeeping; a leaner buffer could shave a
+constant, not the factor. The young role's bursts are gone, but only by paying the worst case every time.
+
+**Why this is the price of a table.** A matcher that keeps per-position data (KMP's entries) must move forward through
+entries created in index order; with cells that only point to older cells, "next" is never a pointer, so the forward order has
+to be kept as sequences, and a jump back to other(j) prepends a stored range: catenation. Without amortisation that is exactly a
+real-time catenable steque, whose constants are the ones above. (A static representation cannot help: the automaton has cycles,
+so any fixed set of cells loses the forward handle after a jump; see NOTES §21.)
+
+**What is left: a matcher without a table.** The pattern is the reversed prefix, so reading it forward is walking the input
+chain (free, and input cells have a single site); the text arrives in order and is read backward from the input chain as well.
+A constant-space matcher needs neither entries nor sequences: Crochemore and Perrin's two-way algorithm, made real time by
+Breslauer, Grossi and Mignosi (CPM 2011), whose right scan never moves back in the text and whose resets go to fixed pattern
+positions (markers realisable as input-chain countdowns). Two obstacles, both open here: (1) the preprocessing (maximal suffixes
+under both orders) needs position arithmetic that the machine lacks (there is no pointer equality); a counter chain of one cell
+per step does it, at one site per step; (2) real time needs the left part checked in time, which fails when the left part is
+longer than the right one (a^(h−1)b); the simple fix of recursing on the left part is unbounded (depth 3, 4, 5 at lengths 10,
+14, 18, all binary words, measured), and Breslauer–Grossi–Mignosi's two-instance construction is needed — its exact prefix
+condition could not be recovered here (the paper was not reachable, and the paraphrase "a prefix longer than u whose critical
+factorization is in its first half" does not exist for a^(h−1)b). That is the next research question.
+
 ## 4. The handoff's other routes, re-evaluated with these numbers
 
 - **Worst-case catenable deques (§4.4 of the handoff).** The rate is set by accumulated work on random palindromes
