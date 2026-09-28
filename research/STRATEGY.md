@@ -885,11 +885,19 @@ has: pointers to input cells, pointers to cells it stores, null tests, tag and l
 - Rerunning the loop on each prefix of the chain avoids the records but costs one pass a step, and the chain grows with the length
   (up to 6 steps at length 1,000), so the young budget would not be a constant.
 
-**Where this leaves it.** The matcher of §3m is the right shape for the grammar; its preprocessing, as designed, leans on position
-comparisons the machine does not have. One primitive would unlock the rest — telling, in O(1) at each restart, which of the two
-maximal suffixes starts later (the two passes' distances from their starts to the frontier grow in lockstep between restarts, so
-the order can only change at a restart). Without it, the options are a larger young budget for the races, or another way to find a
-critical factorization.
+**The later maximal suffix is the one that changed last** (found after the above; measured, not proved). Run the two passes with
+their frontiers in lockstep: at every prefix, the maximal suffix that starts later is the one whose start changed most recently —
+all 1,703,974 prefixes of all binary words up to length 16, and 385,406 prefixes of 448 long words (Fibonacci, Thue–Morse,
+periodic-with-noise and random, lengths 100–2,000), no exception. So Crochemore–Perrin's critical position needs no comparison: a
+bit set at each restart says which pass holds it. The distances from the two starts to the frontier grow in lockstep between
+restarts, so the order can only change at a restart; the rule says it always changes in favour of the pass that restarted.
+
+**What is still open.** The chain of §3m reads the critical factorization of earlier prefixes, and the search reads the period of
+u's maximal suffix. Both are lookups by position into the per-prefix record: its nodes are created in position order and can only
+be walked back, while the passes set block starts (and so the future starts) inside rescans, where the record's nodes already exist
+but are not in hand. With that lookup the whole preprocessing is O(1) a step (the midpoint, which the chain compares against, can be
+a tag on the record, set by a countdown from the midpoint cell that a double-speed walk finds once); without it, the chain reruns
+the loop on each prefix, which grows with the length.
 
 ## 4. The handoff's other routes, re-evaluated with these numbers
 

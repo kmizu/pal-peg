@@ -389,3 +389,6 @@ pointer walking N supplies (N complete first). Every restart of the loop happens
 (366,956 restarts over all binary words up to length 16), so a single countdown per restart tracks the frontier. The open part:
 the critical position is the later of two maximal suffixes — a position comparison the machine lacks (a race costs O(n)); both the
 per-prefix record and the chain of §3m need it. A counter-free loop is quadratic ((ab)^m bbaa, about m/2 steps a letter).
+Later the same day: at every prefix, the later maximal suffix is the one whose start changed most recently (all prefixes of all
+binary words up to 16 and of 448 long words; no exception, not proved) — so the critical position needs no comparison. Still open:
+lookups by position into the per-prefix record (for the chain and for the search's period).
