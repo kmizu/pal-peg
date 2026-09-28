@@ -421,6 +421,28 @@ object Main {
       val maxLen = maxS.toInt
       val words = OverlapProfile.switchWords(maxLen, sc) ++ OverlapProfile.adversarialWords(maxLen, sc).take(150) ++ OverlapProfile.everyLengthWords(maxLen)
       print(TwoWayProbe.run(words, w0S.toInt, sc, kS.toInt).report)
+    case "two-way-machine" :: w0S :: maxS :: kyS :: koS :: rest0 =>
+      // two-way-machine <W0> <maxLen> <young steps a tick> <old steps a tick> [beta=..] (STRATEGY.md §3p): the step machine of the
+      // table-free matcher (the Lpm core's branches) on the banks of the switch, adversarial and every-length words
+      val sc = OverlapPal.schedArg(rest0)
+      val maxLen = maxS.toInt
+      val words = OverlapProfile.switchWords(maxLen, sc) ++ OverlapProfile.adversarialWords(maxLen, sc).take(150) ++ OverlapProfile.everyLengthWords(maxLen)
+      // kb=<n>: only the first n young slots of a tick may store a cell (the lists and the FIFO reversal)
+      val kb = rest0.collectFirst { case x if x.startsWith("kb=") => x.drop(3).toInt }.getOrElse(Int.MaxValue)
+      print(TwoWayMachine.probe(words, w0S.toInt, sc, kyS.toInt, koS.toInt, kb))
+    case "two-way-pal-check" :: kyS :: koS :: w0S :: maxS :: nS :: rest0 =>
+      // two-way-pal-check <ky> <ko> <W0> <maxLen> <words> [beta=..] (STRATEGY.md §3p): the Lpm machine against the oracle (Lps.run)
+      val sc = OverlapPal.schedArg(rest0)
+      val m = TwoWayPal.machine(kyS.toInt, koS.toInt, w0S.toInt, sc)
+      val maxLen = maxS.toInt
+      val words = (OverlapProfile.switchWords(maxLen, sc) ++ OverlapProfile.everyLengthWords(maxLen)).take(nS.toInt)
+      var bad = 0
+      val t0 = System.nanoTime()
+      for (w <- words) {
+        val got = Lps.run(m, w).outputs; val exp = OverlapPal.expectedOutputs(w0S.toInt, w, sc)
+        if (got != exp) { bad += 1; if (bad <= 3) { println(s"mismatch w=$w first at ${got.indices.find(i => got(i) != exp(i))}") } }
+      }
+      println(f"two-way-pal ${kyS}/${koS} W0=$w0S: ${words.length} words, $bad mismatches, ${(System.nanoTime() - t0) / 1e9}%.1f s")
     case "rt-kmp" :: w0S :: maxS :: bS :: mS :: rest0 =>
       // rt-kmp <W0> <maxLen> <builder letters per young tick> <matcher letters per young tick> [beta=..] (STRATEGY.md §3l): the
       // de-amortised matcher (Kaplan–Tarjan steques) on the banks of the switch, adversarial and every-length words
@@ -843,11 +865,11 @@ object Main {
         sharedRK = rest.contains("rk"), endAsEntry = rest.contains("endent"), endOnce = rest.contains("endonce"), rearInP3 = rest.contains("p3"),
         sched = OverlapPal.schedArg(rest), unfold = rest.contains("unfold"), pairs = rest.contains("pairs"), lgap = rest.contains("lgap"),
         merge2 = rest.contains("merge2"), merge3 = rest.contains("merge3"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => rest.contains(s"no$x")))
-      val args = rest.filter(x => x != "trie" && !roleFlags(x) && !x.startsWith("beta=") && !x.startsWith("ypat=") && !x.startsWith("opat="))
-      val isOverlap = kind == "overlap" || kind == "gap" || kind == "role"
+      val args = rest.filter(x => x != "trie" && !roleFlags(x) && !x.startsWith("beta=") && !x.startsWith("ypat=") && !x.startsWith("opat=") && !x.startsWith("drop="))
+      val isOverlap = kind == "overlap" || kind == "gap" || kind == "role" || kind == "twoway"
       val coreKind: OverlapPal.CoreKind = if (kind == "gap") { OverlapPal.GapCore } else { OverlapPal.Kmp2Core }
       def mk(ms: Int, fs: Int, w0: Int): Lps.Machine =
-        if (kind == "role") { RolePal.machine(ms, fs, w0, ropts) } else if (isOverlap) { OverlapPal.machine(ms, fs, w0, coreKind) } else { LpsWarmup.machine(ms, fs, w0) }
+        if (kind == "role") { RolePal.machine(ms, fs, w0, ropts) } else if (kind == "twoway") { TwoWayPal.machine(ms, fs, w0, ropts.sched, rest.collectFirst { case x if x.startsWith("drop=") => x.drop(5).split(",").toSet }.getOrElse(Set())) } else if (isOverlap) { OverlapPal.machine(ms, fs, w0, coreKind) } else { LpsWarmup.machine(ms, fs, w0) }
       def firstAnswer(w0: Int): Int = if (isOverlap) { OverlapPal.firstAnswer(w0, ropts.sched) } else { LpsWarmup.firstAnswer(w0) }
       def opts(w0: Int) = LpsCode.Options(fallbackBelow = Some(firstAnswer(w0)), minBirth = w0, dispatch = if (trie) { LpsCode.Trie } else { LpsCode.Direct },
         codeByStar = rest.contains("star"), mirrorFallback = rest.contains("mirror"), recolour = rest.contains("recolour"),
@@ -887,7 +909,7 @@ object Main {
             val fallbackRules = kept.count(n => res.meta.get(n).exists(_.slot == "fallback"))
             val commit = scala.sys.process.Process(Seq("git", "rev-parse", "--short", "HEAD")).!!.trim
             val variant = if (trie) { "LpsCode+trie+compact" } else { "LpsCode+direct+compact" }
-            val json = after.json(Seq("machine_variant" -> (if (kind == "role") { "RolePal" } else if (kind == "gap") { "OverlapPal+GapKmp" } else if (isOverlap) { "OverlapPal" } else { "LpsWarmup(PAL3)" }), "compiler_variant" -> variant,
+            val json = after.json(Seq("machine_variant" -> (if (kind == "role") { "RolePal" } else if (kind == "twoway") { "TwoWayPal" } else if (kind == "gap") { "OverlapPal+GapKmp" } else if (isOverlap) { "OverlapPal" } else { "LpsWarmup(PAL3)" }), "compiler_variant" -> variant,
               "mSteps" -> ms.toString, "fSteps" -> fs.toString, "source_commit" -> commit, "generation_seconds" -> f"$gen%.2f",
               "site_color_count" -> res.coloring.count.toString, "warmup_W0" -> w0.toString, "first_answer" -> firstAnswer(w0).toString,
               "site_code_rules" -> codeRules.toString, "helper_rules" -> helperRules.toString, "fallback_rules" -> fallbackRules.toString,

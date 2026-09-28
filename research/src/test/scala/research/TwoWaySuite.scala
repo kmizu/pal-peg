@@ -39,22 +39,23 @@ class TwoWaySuite extends munit.FunSuite {
     assert(doubles > 500, s"$doubles two-instance patterns")
   }
 
-  test("the preprocessing is linear: at most 8 steps a pattern letter, however many factorizations it moves through") {
+  test("the preprocessing is linear: at most 16 steps a pattern letter, with at most one change of factorization") {
     def fib(n: Int): String = { var a = "a"; var b = "ab"; while (b.length < n) { val c = b + a; a = b; b = c }; b.take(n) }
     val rnd = new scala.util.Random(8)
     val pats = Seq("a" * 2999 + "b", fib(3000), fib(3000).reverse, "ab" * 1500) ++
       Seq(0.5, 0.7, 0.9, 0.97).flatMap(bias => Seq.fill(20)(Iterator.fill(2000 + rnd.nextInt(1000))(if (rnd.nextDouble() < bias) { 'a' } else { 'b' }).mkString))
     for (p <- pats) {
       val c = new Cost
-      plan(p, c)
-      assert(c.steps <= 8L * p.length, s"${c.steps} steps for length ${p.length}")
+      val pl = plan(p, c)
+      assert(c.steps <= 16L * p.length, s"${c.steps} steps for length ${p.length}")
+      assert(pl.switches <= 1, s"${pl.switches} changes")
     }
   }
 
-  test("on the banks of the overlap recognizer: right answers, never late, 19 steps a young tick are enough (beta 13/32, W0 128)") {
+  test("on the banks of the overlap recognizer: right answers, never late, 33 steps a young tick are enough (beta 13/32, W0 128)") {
     val sc = OverlapPal.Sched(13, 32)
     val words = OverlapProfile.switchWords(300, sc) ++ OverlapProfile.adversarialWords(300, sc).take(60) ++ OverlapProfile.everyLengthWords(300)
-    val st = TwoWayProbe.run(words, 128, sc, 19)
+    val st = TwoWayProbe.run(words, 128, sc, 33)
     assertEquals((st.wrong, st.late, st.tooSlow), (0, 0, 0), st.report)
   }
 

@@ -899,6 +899,130 @@ but are not in hand. With that lookup the whole preprocessing is O(1) a step (th
 a tag on the record, set by a countdown from the midpoint cell that a double-speed walk finds once); without it, the chain reruns
 the loop on each prefix, which grows with the length.
 
+## 3o. The last piece: no chain, no lookup (2026-09-28)
+
+§3n left one operation open: reading the per-prefix record by position, for the chain of factorizations and for the search's
+parameters. It is not needed.
+
+**Jump to the crossing.** The critical start of the prefixes, c(K), is non-decreasing in K. If c(n) is small (2·c(n) ≤ n), one
+instance suffices. Otherwise let m* be the last K with c(K) small and take ℓ_A = c(m*+1). It is not small, so for u = X[0 .. ℓ_A)
+the local period is at least |u| > n − ℓ_A: it overflows both sides, is a period of X, and ℓ_A is critical for X with ℓ_A < π(X).
+And ℓ' = c(ℓ_A) ≤ c(m*) is small. One search for X[0 .. ℓ') in X[ℓ' ..] finishes the plan as in §3m. The chain, which went down
+one factorization at a time, goes to the one place where the staircase crosses the midpoint.
+
+**In the machine's terms.** Two lists: N (the pattern backward) and N' (the pattern forward; each node points to its N node and is
+tagged above or below the midpoint — the midpoint found by a pointer walking two steps per node). The passes walk N', so they hold
+the N node of any position they visit; "small" is a tag; the critical start is the pass that changed last (§3n); the crossing is the
+change whose tag flips. c(ℓ_A) and u's parameters are read by rerunning the passes up to ℓ_A and up to ℓ' (a countdown along N
+from the node the crossing handed over). A few races set the instances' countdown cells. No record, no lookup by position, no
+comparison of positions.
+
+**Measured** (`two-way 128 1000 33 beta=13/32`; 21,267 banks up to length 1,000): no wrong answer, never late, every young window
+in time with **33 steps a young tick** (32 is not enough); at most one change of factorization in any bank; preprocessing 7.6 steps
+a pattern letter on average and 11.8 at most — linear, 16 at most (tested to length 3,000); cells a young tick 6.2 (N, N' and the
+replay at fixed rates); at most 3 comparisons a text letter. The every-pattern test (length ≤ 11) passes with this plan.
+
+| | today's young role | §3m (as a reference model) | §3o (realizable as designed) |
+|---|---|---|---|
+| steps a young tick | 11 | 19 | 33 |
+| cells a young tick | 16, 5 kinds, bursts | 6.2 | 6.2 |
+| position comparisons | — | the later maximal suffix, the chain, lookups | none |
+| a text letter | a pop or a cascade | ≤ 3 comparisons | ≤ 3 comparisons |
+
+The young budget grew from 19 to 33 because the realizable preprocessing reruns the passes twice and needs N' and a few races; all
+of it reads input cells and the two lists. The next step is the Lpm core itself.
+
+## 3p. The table-free matcher as an Lpm core, compiled (2026-09-28)
+
+§3o ended on "the next step is the Lpm core itself". It is built, it is correct, and it compiles to a grammar about five times the
+size of §3f's. The matching side is as cheap as §3m said; the preprocessing is not.
+
+**Built, in three layers.**
+- `TwoWayPtr`: the passes over the lists N and N' at the pointer level. Checked against the reference on 3,000 random patterns
+  (the critical start of the whole pattern, of every prefix, and the crossing). Two corrections came out of it: a restart with
+  k = 1 moves the scan one past the frontier, so it advances the frontier countdowns itself; and further restarts at the crossing's
+  frontier refine the crossing's start (the crossing is the last restart at that frontier, not the first).
+- `TwoWayMachine`: the whole bank as a step machine whose steps are the branches of the Lpm core (old values read, at most one
+  cell per kind, parallel writes, no position comparison): N, N', the pass pairs on P and on the prefixes ℓ_A and ℓ', the
+  periodicity tests, the races, the search, the instances and their coupling, the replay and the FIFO. Its plan equals
+  `TwoWay.plan` on every binary pattern up to length 12 and on 904 longer ones (fields decoded from the cells: ℓ, memory, ℓ_A,
+  ℓ', x' − μ, n − μ, the end and coupling countdowns). On the banks (`two-way-machine 128 1000 27 1 beta=13/32`, 7,554 words,
+  21,267 banks, 6,899 of them double): **no wrong answer and no late window with 27 young steps and 1 old step a tick** (26: two
+  late windows). The reference model's count was 33: one Lpm step does what the reference counted as several.
+- `TwoWayPal`: the Lpm cores, branch for branch as the step machine (4 phase bits, 15 phases, 48 branches; three sites a
+  young layer: an N node, an N' node, a FIFO cell; the old role is the instances on the FIFO). `Lps.run`, which checks every
+  register's and field's kind after every slot, agrees with the oracle on all 1,662 switch and every-length words up to 200
+  (`two-way-pal-check 27 1 64 200 100000 beta=13/32`, W₀ 64).
+
+**Compiled** (`lps-code optimize twoway 27 1 64 … star mirror sound pts beta=13/32`, measured):
+
+| | compact rules | compact rhs nodes | dispatch arms | colours |
+|---|---:|---:|---:|---:|
+| §3f (role 11/4, W₀ 128) | 3,521 | 143,051 | 15,173 | 22 |
+| table-free 27/1, W₀ 64 | 18,553 | 871,391 | 122,890 | 30 |
+| table-free 27/1, W₀ 128 | 18,600 | 888,682 | 123,072 | 30 |
+
+With the inliner at the same factor (`peg-cse-improve … 2.45 65536 60 1000 10`, 1,615 s): **5,129 rules at 2,134,186 nodes,
+10,448,238 bytes**, against §3f's 996 rules at 349,849 nodes and 1,542,201 bytes.
+
+(Arms are every alternative of every choice, `PegMetrics`; §3f's 9,736 counted dispatch arms only.)
+
+**Where it goes.** The 27 young layers hold 96 % of the grammar. Per layer, against §3f compiled the same way (measured):
+
+| | young layers | a young layer | old layers | an old layer |
+|---|---:|---|---:|---|
+| §3f | 10 + IN | about 220 rules, 7,700 nodes | 3 + IN | about 186 rules, 7,600 nodes |
+| table-free | 27 | about 660 rules, 31,800 nodes | 1 | 98 rules, 3,036 nodes |
+
+The old role is the cheapest there has been: the table-free matcher reads almost only input cells, as §3m promised. Inside a
+young layer, pointer reads and their colour codes are about 80 % of the tokens and about 3,500 arms: some 120 reads of N and N'
+cells a layer, each branching over the ~27 layers that can make such a cell. Leaving phases out of the young step (a size probe
+only; the machine is then wrong) shows where the reads are:
+
+| left out | compact rules | nodes | arms |
+|---|---:|---:|---:|
+| nothing | 18,553 | 871,391 | 122,890 |
+| the passes | 8,014 | 152,766 | 22,635 |
+| the list builders (BN, BNP) | 8,603 | 122,323 | 18,589 |
+| the search | 14,881 | 646,340 | 91,107 |
+| the races and periodicity tests | 11,409 | 525,484 | 74,587 |
+| the matching (replay, FIFO) | 17,327 | 838,191 | 118,130 |
+
+With no list cells ever made, 86 % of the nodes disappear: the cost is the reads of list cells, and the passes are most of them. The
+matching is 4 %. (The probes overlap: a phase left out also leaves later phases' registers empty.)
+
+**Why.** Directly: the passes, their reruns, the search and the races read the lists at every step (the scan node, the block and
+rescan counters, the frontier countdowns, the start of the next candidate), and list cells are born in every young layer, so every
+read fans out about 27 ways. Underneath: the lists are the only way to turn a pattern position into a countdown (the input chain
+only walks towards the pattern's end), and they can only be built once the pattern's last letter has arrived — in a burst at the
+start of a window of about 0.4 h ticks, before the passes can run. So every young layer must be able to make them. §3m's estimate
+counted the cells at their average rate (6.2 a tick); the fan-out is set by the peak, and the peak is every layer.
+
+**One lever, measured.** Let only the first kb young layers of a tick make cells (list and FIFO); the others stall on those steps
+(`two-way-machine … kb=`, same banks):
+
+| kb (layers that make cells) | young layers needed | ky · kb (∝ the arms of list reads) |
+|---:|---:|---:|
+| 27 (all) | 27 | 729 |
+| 16 | 36 (32: one late window) | 576 |
+| 12 | 44 (36: 5,113 late) | 528 |
+| 8 | more than 60 | — |
+
+The list-read arms fall by at most 28 %, while everything else in a layer grows with the layer count: nowhere near the factor five.
+
+**Standing.** The current best stays §3f (996 rules). What this establishes: a table-free matcher makes the old role nearly free
+(one layer, 98 rules) and needs no amortisation; its preprocessing, as designed, reads list cells at every step, and in this
+compilation scheme that costs about one arm per young layer per read. A young role that fits would need a preprocessing whose
+steps read mostly input cells, or lists made in a few layers without the burst — neither is at hand.
+
+Reproduce (from `research/`):
+
+```sh
+sbt "run two-way-machine 128 1000 27 1 beta=13/32"            # the step machine on the banks (add kb=<n> for the lever)
+sbt "run two-way-pal-check 27 1 64 200 100000 beta=13/32"      # the Lpm machine against the oracle
+sbt "run lps-code optimize twoway 27 1 64 out.json star mirror sound pts beta=13/32"
+```
+
 ## 4. The handoff's other routes, re-evaluated with these numbers
 
 - **Worst-case catenable deques (§4.4 of the handoff).** The rate is set by accumulated work on random palindromes
