@@ -858,6 +858,39 @@ out over the ~11 layers that store its kind. Here almost every read is of an inp
 layer stay under about 121/19 ≈ 6.4 times today's. The next step is to write it as an Lpm core (young: N, the two passes, R, the
 chain, the search, then the two instances; old: the two instances) and compile it.
 
+## 3n. Writing the table-free matcher in the machine's terms: what is solved, what is not (2026-09-28)
+
+Before writing §3m as an Lpm core, the parts that the reference model does with integers were checked against what the machine
+has: pointers to input cells, pointers to cells it stores, null tests, tag and letter tests — no comparison of two positions.
+
+**Solved.**
+- Reads of input cells are cheap in the grammar: `Fld(x, 1)` on an input pointer compiles to a constant expression (one character
+  back), with no dispatch over sites (`LpsCode`, the `KInp` case). So a matcher whose reads are almost all input cells escapes the
+  r·L² growth, as §3m assumed.
+- The matching phase needs no position comparison: resets go to fixed cells, lengths are countdowns walking the input chain to its
+  end, the backward check walks N to its end, and the two instances are coupled by fixed countdowns (§3m).
+- The block counter of the maximal-suffix loop (k = p) is a countdown of length p; a pointer D that walks N one node per scanned
+  letter gives its start (the pattern cell at distance p from the end) at every "<" event. N must be complete before the loop starts
+  (its head, the input's first letter, is built last).
+- Recording every prefix's maximal suffix needs to know when the scan passes its farthest position so far. In Crochemore–Perrin's
+  loop every restart (">") happens at that frontier, never inside a rescan (all binary words up to length 16, both orders: 366,956
+  restarts, all at the frontier; measured), so one countdown set at each restart tells when the rescan is over.
+
+**Not solved.**
+- Crochemore–Perrin's critical position is the later of the two maximal suffixes (one per order): a comparison of two positions.
+  The machine can only race two pointers to the end (O(n) steps). Recording every prefix's critical factorization needs one such
+  comparison a prefix; the chain of §3m needs one a step (and whether the left part is the longer is another).
+- A counter-free variant of the maximal-suffix loop (a lag running at a fixed distance, restarting just after it) is correct but
+  quadratic: (ab)^m bbaa takes about m/2 steps a letter under one order (measured up to m = 192).
+- Rerunning the loop on each prefix of the chain avoids the records but costs one pass a step, and the chain grows with the length
+  (up to 6 steps at length 1,000), so the young budget would not be a constant.
+
+**Where this leaves it.** The matcher of §3m is the right shape for the grammar; its preprocessing, as designed, leans on position
+comparisons the machine does not have. One primitive would unlock the rest — telling, in O(1) at each restart, which of the two
+maximal suffixes starts later (the two passes' distances from their starts to the frontier grow in lockstep between restarts, so
+the order can only change at a restart). Without it, the options are a larger young budget for the races, or another way to find a
+critical factorization.
+
 ## 4. The handoff's other routes, re-evaluated with these numbers
 
 - **Worst-case catenable deques (§4.4 of the handoff).** The rate is set by accumulated work on random palindromes

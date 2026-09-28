@@ -380,3 +380,12 @@ Pitfalls met on the way: the backward check must count lateness only while it st
 X' = X, the second instance reports on the same letter as the first finishes, so the coupling must look at B's report before A's
 new candidate replaces the flag; the chain of factorizations walked by searching made one search a step (up to 6 at length 1,000)
 and made the preprocessing grow with the length until the chain was read from R.
+
+## 23. The table-free matcher in the machine's terms (2026-09-28, `STRATEGY.md` §3n)
+
+Checked before writing §3m as an Lpm core. Input-cell reads compile to a constant expression (no site dispatch), so §3m's
+assumption holds. Matching needs no position comparison. The maximal-suffix loop's block counter is a countdown whose start a
+pointer walking N supplies (N complete first). Every restart of the loop happens at the scan's frontier, never inside a rescan
+(366,956 restarts over all binary words up to length 16), so a single countdown per restart tracks the frontier. The open part:
+the critical position is the later of two maximal suffixes — a position comparison the machine lacks (a race costs O(n)); both the
+per-prefix record and the chain of §3m need it. A counter-free loop is quadratic ((ab)^m bbaa, about m/2 steps a letter).
