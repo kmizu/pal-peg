@@ -92,10 +92,22 @@ object GapKmp {
     * live sequence gap(cur) ++ [cur] ++ g is the same, one step earlier. Needs separate rear and K-node sites. */
   final class Core(M: Mod, T: Tags, feed: Feed, matchOnly: Boolean = false, report: Boolean = true, mergeTmp: Boolean = false,
                    compact: Boolean = false, sharedRK: Boolean = false, endAsEntry: Boolean = false, endStep: Boolean = true,
-                   unfold: Boolean = false)
+                   unfold: Boolean = false, lgap: Boolean = false, merge2: Boolean = false,
+                   merge3: Boolean = false, m2off: Set[String] = Set(), noAlloc: Boolean = false, stallPops: Boolean = true)
       extends OverlapPal.BankCore {
+    /** the branches of the last `universal` in priority order, with their guards (STRATEGY.md §3e, experiment E3): the pops, then
+      * the BUILD and MATCH transitions split by their fast paths, then the FIFO reversal */
+    var branches: Vector[(String, C)] = Vector()
     require(endStep || compact, "a step without the end-of-build transition needs the compact states (the pending end is a state)")
     require(!(unfold && sharedRK), "unfold needs the K-node site in a BUILD step, which sharedRK gives to the rear cell")
+    /** `noAlloc` (STRATEGY.md §3g): the step has no allocation site; a branch that would store a new cell stalls instead (the
+      * exclusive guards keep every later branch out and every register and bit keeps its value), so the cells of a tick are
+      * born only at the layers of the full step */
+    require(!noAlloc || compact, "a non-allocating step needs the compact states")
+    /** `stallPops = false` (STRATEGY.md §3h, a what-if): the non-allocating step keeps the list and K node sites and acts on every
+      * pop, stalling only on builds, the end, the FIFO reversal and match mismatches; its rates are those a matcher whose pops
+      * store no cell would reach with the same steps (not a candidate grammar: its pops still allocate) */
+    private val freePops = noAlloc && !stallPops
     import M.*
     import T.*
     private val rvName = if (mergeTmp) { "tmp" } else { "rv" }
@@ -162,33 +174,60 @@ object GapKmp {
       val gTakeList = all(gTake, IsNull(k4), IsNull(k3), not(IsNull(k1)))
       val gTakeEmpty = all(gTake, IsNull(k4), IsNull(k3), IsNull(k1))
       val gPopR1 = And(gPop0, rOnly)
+      // merge2 (STRATEGY.md §3e): a pop and the pop that always follows it, in one step and with the same cells — popG whose
+      // gap starts with an LNODE (then popL), the last two entries of a reversal (rev then rev-last, takeRev then rev-last)
+      val gPopGL = if (merge2 && !m2off("G")) { And(gPopG, TagIs(Fld(gE, 2), LNODE)) } else { False }
+      val gRev2 = if (merge2 && !m2off("R") && !m2off("R1")) { all(gRev, not(rvLast), IsNull(Fld(Fld(rv, 2), 2))) } else { False }
+      val gTakeRev2 = if (merge2 && !m2off("R") && !m2off("R2")) { all(gTakeRev, not(IsNull(Fld(k3, 2))), IsNull(Fld(Fld(k3, 2), 2))) } else { False }
+      // merge3 (STRATEGY.md §3e): the splice of a one-node K stack skips its no-op first step; the splice's last step also takes the
+      // list it put on top when takePop would; a matched BUILD step also takes a one-entry reversal from the top of K (takeRev1)
+      val gTakeSplSkip = if (merge3) { And(gTakeSpl, IsNull(Fld(k4, 2))) } else { False }
+      val gSpl2Pop = if (merge3) { all(gSpl2, IsNull(Fld(ks, 4)), IsNull(Fld(ks, 3)), TagIs(Fld(ks, 1), LNODE)) } else { False }
       val gPopR = all(gPop0, IsNull(L), IsNull(K), not(IsNull(R)))
       // transitions
       val gBuildT = And(stBuild, not(IsNull(src)))
+      val gFastT: C = if (merge3 && unfold && !matchOnly) {
+        all(gBuildT, same, IsNull(L), not(IsNull(K)), IsNull(k4), not(IsNull(k3)), IsNull(Fld(k3, 2)))
+      } else { False }
       val gEnd = if (endStep) { all(stBuild, IsNull(src), not(IsNull(cur))) } else { False }   // otherwise the bank waits in this state
       val gRevPhase = if (compact) { False } else { at(REV) }   // a Mod without phase bits has no at()
       val gMatchT = all(stMatch, not(rev), not(IsNull(pendF)))
       val gFifoRev = And(stMatch, Or(rev, And(IsNull(pendF), not(IsNull(pendB)))))
       val gTrans = if (matchOnly) { gMatchT } else { Or(gBuildT, gMatchT) }
       val p = prog()
+      // the options of STRATEGY.md §3e add branches and cases only when they are on: a literal False guard is not compiled away, so
+      // it would change (and grow) the grammar of every machine without the option
+      def whenOn(g: C)(f: Prog#Upd => Unit): Unit = if (g != False) { p.when(g)(f) }
+      def on(cs: Vector[(C, E)]): Vector[(C, E)] = cs.filter(_._1 != False)
+      def anyOn(cs: C*): C = any(cs.filter(_ != False)*)
+      /** a branch that stores a new cell: with noAlloc it stalls (an empty body) */
+      def alloc(g: C)(f: Prog#Upd => Unit): Unit = if (noAlloc) { p.when(g)(_ => ()) } else { p.when(g)(f) }
+      /** a pop that stores a new cell: it stalls like `alloc` unless the pops are free (the what-if of §3h) */
+      def popAlloc(g: C)(f: Prog#Upd => Unit): Unit = if (freePops) { p.when(g)(f) } else { alloc(g)(f) }
+      def popAllocOn(g: C)(f: Prog#Upd => Unit): Unit = if (g != False) { popAlloc(g)(f) }
       /** unfold: a transition that mismatches at an entry with a nonempty gap unfolds it in the same step */
       val gU: C = if (unfold) { all(gTrans, not(same), not(all(IsNull(Fld(cur, 2)), IsNull(Fld(cur, 3)), IsNull(Fld(cur, 4))))) } else { False }
       // shared allocation sites, one per tag: the list node (GNODE for the mismatch sequence of a transition, LNODE
       // otherwise; with unfold GNODE only as the gap of a new entry), the entry (END at the end of the pattern), the K
       // node, the R node, the queue cell
-      val lnode: E = p.site(if (unfold && matchOnly) { Const(LNODE) } else if (unfold) { TE.Ite(And(gBuildT, same), Const(GNODE), Const(LNODE)) } else { TE.Ite(gTrans, Const(GNODE), Const(LNODE)) },
+      // lgap (STRATEGY.md §3e): gap(cur) ++ [cur] ++ L is [cur] ++ L when gap(cur) is empty, so the node is an LNODE then: its
+      // later pop is one popL instead of a popG followed by a takePop
+      val gapful: C = if (lgap) { not(all(IsNull(Fld(cur, 2)), IsNull(Fld(cur, 3)), IsNull(Fld(cur, 4)))) } else { True }
+      val lnode: E = if (noAlloc && !freePops) { Null } else p.site(if (unfold && matchOnly) { Const(LNODE) }
+        else if (unfold) { TE.Ite(if (lgap) { all(gBuildT, same, gapful) } else { And(gBuildT, same) }, Const(GNODE), Const(LNODE)) }
+        else { TE.Ite(if (lgap) { And(gTrans, gapful) } else { gTrans }, Const(GNODE), Const(LNODE)) },
         selectE(Vector((gRev, rearE(rv)), (gPopG, gE), (gPopR, rearE(R)), (gTakeRev, rearE(k3))), cur),
         Ite(gPopG, Fld(L, 2), Ite(Or(gPopR, gTakeRev), Null, L)), Null, Null)
-      val entry: E = if (matchOnly) { Null } else { p.site(if (endAsEntry) { Const(ENTRY) } else { TE.Ite(gEnd, Const(END), Const(ENTRY)) },
+      val entry: E = if (matchOnly || noAlloc) { Null } else { p.site(if (endAsEntry) { Const(ENTRY) } else { TE.Ite(gEnd, Const(END), Const(ENTRY)) },
         Ite(gEnd, Null, src), Ite(gEnd, lnode, Ite(same, lnode, L)), K, R) }
       val uc = if (unfold) { Vector((gU, 0)) } else { Vector() }   // the unfold case comes first: a transition is exclusive of the pops
       val kf1 = selectE(uc.map(c => (c._1, lnode)) ++ Vector((gPopG, lnode), (gSpl2, Fld(ks, 1)), (gSpl1, Null)), k1)
       val kf2 = selectE(uc.map(c => (c._1, K)) ++ Vector((gPopG, K), (gSpl1, K), (gSpl2, K)), k2)
-      val kf3 = selectE(uc.map(c => (c._1, Fld(cur, 4))) ++ Vector((gPopG, Fld(gE, 4)), (gSpl2, Fld(ks, 3)), (gSpl1, Null), (gTakeRev, Null)), k3)
+      val kf3 = selectE(uc.map(c => (c._1, Fld(cur, 4))) ++ on(Vector((gFastT, Null))) ++ Vector((gPopG, Fld(gE, 4)), (gSpl2, Fld(ks, 3)), (gSpl1, Null), (gTakeRev, Null)), k3)
       val kf4 = selectE(uc.map(c => (c._1, Fld(cur, 3))) ++ Vector((gPopG, Fld(gE, 3)), (gSpl1, Fld(ks, 2)), (gSpl2, Fld(ks, 4))), Null)
       val rearNext = Ite(all(gBuildT, same, rOnly), Null, R)   // fast4: the rear becomes [E_i]
       def rearFields(e: E, next: E): Vector[E] = if (T.rearEntry == 3) { Vector(Null, next, e, Null) } else { Vector(e, next, Null, Null) }
-      val (knode, rnode) = if (sharedRK && !matchOnly) {
+      val (knode, rnode) = if (freePops) { (p.site(Const(KNODE), kf1, kf2, kf3, kf4), Null) } else if (noAlloc) { (Null, Null) } else if (sharedRK && !matchOnly) {
         val rf = rearFields(entry, rearNext)
         val rk = p.site(TE.Ite(gBuildT, Const(RNODE), Const(KNODE)), Ite(gBuildT, rf(0), kf1), Ite(gBuildT, rf(1), kf2), Ite(gBuildT, rf(2), kf3), Ite(gBuildT, rf(3), kf4))
         (rk, rk)
@@ -196,7 +235,7 @@ object GapKmp {
         val kn = p.site(Const(KNODE), kf1, kf2, kf3, kf4)
         (kn, if (matchOnly) { Null } else { val rf = rearFields(entry, rearNext); p.site(Const(RNODE), rf(0), rf(1), rf(2), rf(3)) })
       }
-      val iq: E = p.site(Const(IQC), if (matchOnly) { Fld(pendB, 1) } else { Ite(stBuild, src, Fld(pendB, 1)) }, pendF, Null, Null)
+      val iq: E = if (noAlloc) { Null } else p.site(Const(IQC), if (matchOnly) { Fld(pendB, 1) } else { Ite(stBuild, src, Fld(pendB, 1)) }, pendF, Null, Null)
       def leave(u: Prog#Upd): Unit =
         if (compact) { u.bit(n("q1"), False); u.bit(n("q0"), False) }   // back to the transition state of the same side
         else if (matchOnly) { for (i <- 0 until 3) { u.bit(n(s"p$i"), if (((MATCH >> i) & 1) == 1) { True } else { False }) } }
@@ -208,38 +247,67 @@ object GapKmp {
       def consumeSrc(u: Prog#Upd): Unit = { u.set(feed.src, prevIn(src)); u.set(feed.pendF, Ite(IsNull(rc), pendF, iq)); u.set(feed.rc, prevIn(rc)) }
       // ---- pop in progress
       p.when(And(gRev, rvLast)) { u => u.set(n("cur"), rearE(rv)); u.set(n(rvName), Null); leave(u) }   // the last reversed entry is the state
-      p.when(gRev) { u => u.set(n("L"), lnode); u.set(n(rvName), Fld(rv, 2)) }
-      p.when(gSpl1) { u => u.set(n("K"), Ite(IsNull(Fld(ks, 2)), K, knode)); setSub(u, SSPL2) }          // the spliced stack's own rest first
-      p.when(gSpl2) { u => u.set(n("K"), knode); u.set(n(ksName), Null); setSub(u, S0) }                    // then its three slots
+      popAllocOn(gRev2) { u => u.set(n("L"), lnode); u.set(n("cur"), rearE(Fld(rv, 2))); u.set(n(rvName), Null); leave(u) }
+      popAlloc(gRev) { u => u.set(n("L"), lnode); u.set(n(rvName), Fld(rv, 2)) }
+      if (noAlloc && !freePops) { p.when(And(gSpl1, IsNull(Fld(ks, 2)))) { u => u.set(n("K"), K); setSub(u, SSPL2) } }   // no K node needed
+      popAlloc(gSpl1) { u => u.set(n("K"), Ite(IsNull(Fld(ks, 2)), K, knode)); setSub(u, SSPL2) }          // the spliced stack's own rest first
+      whenOn(gSpl2Pop) { u => u.set(n("cur"), Fld(Fld(ks, 1), 1)); u.set(n("L"), Fld(Fld(ks, 1), 2)); u.set(n(ksName), Null); leave(u) }
+      popAlloc(gSpl2) { u => u.set(n("K"), knode); u.set(n(ksName), Null); setSub(u, S0) }                    // then its three slots
       p.when(gPopL) { u => u.set(n("cur"), Fld(L, 1)); u.set(n("L"), Fld(L, 2)); leave(u) }
-      p.when(gPopG) { u => u.set(n("L"), Fld(gE, 2)); u.set(n("K"), knode) }                          // gap(e) ++ [e] ++ rest in one step
-      p.when(gTakeSpl) { u => u.set(n(ksName), k4); u.set(n("K"), knode); setSub(u, SSPL1) }
-      p.when(gTakeRev1) { u => u.set(n("cur"), rearE(k3)); u.set(n("K"), Ite(IsNull(k1), k2, knode)); leave(u) }
-      p.when(gTakeRev) { u => u.set(n("L"), lnode); u.set(n(rvName), Fld(k3, 2)); u.set(n("K"), Ite(IsNull(k1), k2, knode)) }
+      popAllocOn(gPopGL) { u => u.set(n("cur"), Fld(Fld(gE, 2), 1)); u.set(n("L"), Fld(Fld(gE, 2), 2)); u.set(n("K"), knode); leave(u) }
+      popAlloc(gPopG) { u => u.set(n("L"), Fld(gE, 2)); u.set(n("K"), knode) }                          // gap(e) ++ [e] ++ rest in one step
+      popAllocOn(gTakeSplSkip) { u => u.set(n(ksName), k4); u.set(n("K"), knode); setSub(u, SSPL2) }
+      popAlloc(gTakeSpl) { u => u.set(n(ksName), k4); u.set(n("K"), knode); setSub(u, SSPL1) }
+      if (noAlloc && !freePops) { p.when(And(gTakeRev1, IsNull(k1))) { u => u.set(n("cur"), rearE(k3)); u.set(n("K"), k2); leave(u) } }   // no K node needed
+      popAlloc(gTakeRev1) { u => u.set(n("cur"), rearE(k3)); u.set(n("K"), Ite(IsNull(k1), k2, knode)); leave(u) }
+      popAllocOn(gTakeRev2) { u => u.set(n("L"), lnode); u.set(n("cur"), rearE(Fld(k3, 2))); u.set(n(rvName), Null); u.set(n("K"), Ite(IsNull(k1), k2, knode)); leave(u) }
+      popAlloc(gTakeRev) { u => u.set(n("L"), lnode); u.set(n(rvName), Fld(k3, 2)); u.set(n("K"), Ite(IsNull(k1), k2, knode)) }
       p.when(gTakePop) { u => u.set(n("cur"), Fld(k1, 1)); u.set(n("L"), Fld(k1, 2)); u.set(n("K"), k2); leave(u) }
       p.when(gTakeList) { u => u.set(n("L"), k1); u.set(n("K"), k2) }
       p.when(gTakeEmpty) { u => u.set(n("K"), k2) }
       p.when(gPopR1) { u => u.set(n("cur"), rearE(R)); u.set(n("R"), Null); leave(u) }
-      p.when(gPopR) { u => u.set(n("L"), lnode); u.set(n(rvName), Fld(R, 2)); u.set(n("R"), Null) }   // the top goes to L, the rest is reversed
+      popAlloc(gPopR) { u => u.set(n("L"), lnode); u.set(n(rvName), Fld(R, 2)); u.set(n("R"), Null) }   // the top goes to L, the rest is reversed
       load(p)
+      locally {
+        val fastM = And(same, headIsL); val fastK = And(same, kTop); val fastR = And(same, rOnly)
+        val misZ0 = all(not(same), IsNull(Fld(cur, 2)), IsNull(Fld(cur, 3)), IsNull(Fld(cur, 4)))
+        val bt = And(gBuildT, not(IsNull(cur)))
+        val fastUx = if (merge2 && unfold && !m2off("U")) { And(not(same), TagIs(Fld(cur, 2), LNODE)) } else { False }
+        branches = Vector("rev-last" -> And(gRev, rvLast), "rev2" -> gRev2, "rev" -> gRev, "spl1" -> gSpl1, "spl2pop" -> gSpl2Pop, "spl2" -> gSpl2, "popL" -> gPopL,
+          "popGL" -> gPopGL, "popG" -> gPopG, "takeSplSkip" -> gTakeSplSkip, "takeSpl" -> gTakeSpl, "takeRev1" -> gTakeRev1, "takeRev2" -> gTakeRev2, "takeRev" -> gTakeRev,
+          "takePop" -> gTakePop, "takeList" -> gTakeList,
+          "takeEmpty" -> gTakeEmpty, "popR1" -> gPopR1, "popR" -> gPopR) ++
+          (if (matchOnly) { Vector() } else {
+            Vector("build-E0" -> And(gBuildT, IsNull(cur)), "build-fast1" -> And(bt, fastM), "build-fast2" -> all(bt, same, liveEmpty),
+              "build-fast3" -> And(bt, fastK), "build-fast4" -> And(bt, fastR), "build-misZ" -> And(bt, misZ0), "build-misL" -> And(bt, fastUx), "build-takeRev1" -> gFastT,
+              "build-same-pop" -> And(bt, same),
+              "build-mis" -> bt, "end" -> gEnd) }) ++
+          Vector("match-full" -> all(gMatchT, same, liveEmpty), "match-fastM" -> And(gMatchT, fastM), "match-fastK" -> And(gMatchT, fastK),
+            "match-fastR" -> And(gMatchT, fastR), "match-misZ" -> And(gMatchT, misZ0), "match-misL" -> And(gMatchT, fastUx),
+            "match-same-pop" -> And(gMatchT, same), "match-mis" -> gMatchT,
+            "fifo" -> gFifoRev)
+      }
       // ---- BUILD: the pattern letter src against cur = E_f; E_i = (src, h_i) with h_i = same ? C : g,
       //      C = gap(cur) ++ [cur] ++ g (the GNODE); D = (same ? g : C) ++ [E_i]; (cur, live) = pop(D)
       if (!matchOnly) {   // the BUILD branches stay in their original place: the exclusive guards of later branches depend on the order
-      p.when(And(gBuildT, IsNull(cur))) { u => u.set(n("cur"), entry); consumeSrc(u) }   // E_0: empty gap
-      p.when(gBuildT) { u =>
+      alloc(And(gBuildT, IsNull(cur))) { u => u.set(n("cur"), entry); consumeSrc(u) }   // E_0: empty gap
+      alloc(gBuildT) { u =>
         val fast1 = And(same, headIsL)              // D = [head L] ++ …: pop directly
         val fast2 = And(same, liveEmpty)            // D = [E_i]: the new entry is the state
         val fast3 = And(same, kTop)                 // D = [head of the list on top of K] ++ …
         val fast4 = And(same, rOnly)                // D = [R.p1, E_i]: pop R.p1, the rear becomes [E_i]
         val misZ = all(not(same), IsNull(Fld(cur, 2)), IsNull(Fld(cur, 3)), IsNull(Fld(cur, 4)))   // gap(cur) empty (E_0): D = [cur] ++ g ++ [E_i]
-        u.set(n("cur"), selectE(Vector((fast1, Fld(L, 1)), (fast2, entry), (fast3, Fld(k1, 1)), (fast4, rearE(R))), cur))
-        u.set(n("L"), selectE(Vector((fast1, Fld(L, 2)), (fast3, Fld(k1, 2)), (Or(same, misZ), L)), if (unfold) { Fld(cur, 2) } else { lnode }))
-        u.set(n("K"), if (unfold) { selectE(Vector((fast3, k2), (Or(same, misZ), K)), knode) } else { Ite(fast3, k2, K) })
+        // merge2: the unfolded gap starts with an LNODE, whose entry is the new state at once
+        val fastU = if (merge2 && unfold && !m2off("U")) { And(not(same), TagIs(Fld(cur, 2), LNODE)) } else { False }
+        val fastT = gFastT
+        u.set(n("cur"), selectE(on(Vector((fast1, Fld(L, 1)), (fast2, entry), (fast3, Fld(k1, 1)), (fast4, rearE(R)), (fastU, Fld(Fld(cur, 2), 1)), (fastT, rearE(k3)))), cur))
+        u.set(n("L"), selectE(on(Vector((fast1, Fld(L, 2)), (fast3, Fld(k1, 2)), (Or(same, misZ), L), (fastU, Fld(Fld(cur, 2), 2)))), if (unfold) { Fld(cur, 2) } else { lnode }))
+        u.set(n("K"), if (unfold) { selectE(on(Vector((fast3, k2), (fastT, Ite(IsNull(k1), k2, knode)), (Or(same, misZ), K))), knode) } else { Ite(fast3, k2, K) })
         u.set(n("R"), Ite(fast2, R, rnode))
         consumeSrc(u)
-        popUnless(u, any(fast1, fast2, fast3, fast4, misZ), BUILD, BPOP)
+        popUnless(u, anyOn(fast1, fast2, fast3, fast4, misZ, fastU, fastT), BUILD, BPOP)
       }
-      if (compact) { if (endStep) { p.when(gEnd) { u => u.set(n("end"), entry); u.bit(n("q2"), True); u.bit(n("q1"), False); u.bit(n("q0"), False) } } }
+      if (compact) { if (endStep) { alloc(gEnd) { u => u.set(n("end"), entry); u.bit(n("q2"), True); u.bit(n("q1"), False); u.bit(n("q0"), False) } } }
       else {
         p.when(gEnd) { u => u.set(n("end"), entry); u.phase(REV) }
         p.when(gRevPhase) { u => u.phase(MATCH) }
@@ -248,23 +316,41 @@ object GapKmp {
       // ---- MATCH: the FIFO head against cur; a match pops the live sequence (empty = full match: report, then the
       //      reset state from END is popped into cur); a mismatch pushes GNODE(cur, L) and pops, except at an entry
       //      with an empty gap (E_0)
-      p.when(gMatchT) { u =>
+      if (noAlloc) {
+        val misZm = all(not(same), IsNull(Fld(cur, 2)), IsNull(Fld(cur, 3)), IsNull(Fld(cur, 4)))
+        p.when(all(gMatchT, not(same), not(misZm))) { _ => () }   // stall: the mismatch stores a new cell
+        p.when(gMatchT) { u =>
+          val full = And(same, liveEmpty)
+          val fastM = And(same, headIsL)
+          val fastK = And(same, kTop)
+          val fastR = And(same, rOnly)
+          u.set(n("cur"), selectE(Vector((fastM, Fld(L, 1)), (fastK, Fld(k1, 1)), (fastR, rearE(R))), cur))
+          u.set(n("L"), selectE(Vector((fastM, Fld(L, 2)), (fastK, Fld(k1, 2)), (full, Fld(end, 2))), L))
+          u.set(n("K"), selectE(Vector((fastK, k2), (full, Fld(end, 3))), K))
+          u.set(n("R"), selectE(Vector((fastR, Null), (full, Fld(end, 4))), R))
+          if (report) { u.bit(n("acc"), Or(B("acc"), And(full, atFrontier))) }
+          u.set(feed.pendF, Fld(pendF, 2))
+          popUnless(u, anyOn(fastM, fastK, fastR, misZm), MATCH, MPOP)
+        }
+      } else p.when(gMatchT) { u =>
         val full = And(same, liveEmpty)
         val fastM = And(same, headIsL)
         val fastK = And(same, kTop)
         val fastR = And(same, rOnly)
         val misZ = all(not(same), IsNull(Fld(cur, 2)), IsNull(Fld(cur, 3)), IsNull(Fld(cur, 4)))
-        u.set(n("cur"), selectE(Vector((fastM, Fld(L, 1)), (fastK, Fld(k1, 1)), (fastR, rearE(R))), cur))
-        u.set(n("L"), selectE(Vector((fastM, Fld(L, 2)), (fastK, Fld(k1, 2)), (full, Fld(end, 2)), (And(not(same), not(misZ)), if (unfold) { Fld(cur, 2) } else { lnode })), L))
+        val fastU = if (merge2 && unfold && !m2off("U")) { And(not(same), TagIs(Fld(cur, 2), LNODE)) } else { False }
+        u.set(n("cur"), selectE(on(Vector((fastM, Fld(L, 1)), (fastK, Fld(k1, 1)), (fastR, rearE(R)), (fastU, Fld(Fld(cur, 2), 1)))), cur))
+        u.set(n("L"), selectE(on(Vector((fastM, Fld(L, 2)), (fastK, Fld(k1, 2)), (full, Fld(end, 2)), (fastU, Fld(Fld(cur, 2), 2)),
+          (And(not(same), not(misZ)), if (unfold) { Fld(cur, 2) } else { lnode }))), L))
         u.set(n("K"), selectE(Vector((fastK, k2), (full, Fld(end, 3))) ++ (if (unfold) { Vector((And(not(same), not(misZ)), knode)) } else { Vector() }), K))
         u.set(n("R"), selectE(Vector((fastR, Null), (full, Fld(end, 4))), R))
         if (report) { u.bit(n("acc"), Or(B("acc"), And(full, atFrontier))) }
         u.set(feed.pendF, Fld(pendF, 2))
-        popUnless(u, any(fastM, fastK, fastR, misZ), MATCH, MPOP)
+        popUnless(u, anyOn(fastM, fastK, fastR, misZ, fastU), MATCH, MPOP)
       }
       // ---- the FIFO: the back stack is reversed onto the front one cell per step (letters that arrived while the
       //      front was busy); the same as LpsPal2.Matcher.load
-      p.when(gFifoRev) { u =>
+      alloc(gFifoRev) { u =>
         val last = IsNull(Fld(pendB, 2))
         u.set(feed.pendF, iq)
         u.set(feed.pendB, Ite(last, pendN, Fld(pendB, 2)))

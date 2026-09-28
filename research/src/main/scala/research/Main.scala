@@ -414,6 +414,296 @@ object Main {
           "rounds" -> trace.map { case (n, nodes, p) => s"$n/$nodes/$p" }.mkString(" "), "sha256_uncompressed" -> sha))
         java.nio.file.Files.write(java.nio.file.Paths.get(outJson), json.getBytes("UTF-8"))
       }
+    case "two-way" :: w0S :: maxS :: kS :: rest0 =>
+      // two-way <W0> <maxLen> <steps a young tick> [beta=..] (STRATEGY.md §3m): the table-free real-time matcher on the banks of
+      // the switch, adversarial and every-length words
+      val sc = OverlapPal.schedArg(rest0)
+      val maxLen = maxS.toInt
+      val words = OverlapProfile.switchWords(maxLen, sc) ++ OverlapProfile.adversarialWords(maxLen, sc).take(150) ++ OverlapProfile.everyLengthWords(maxLen)
+      print(TwoWayProbe.run(words, w0S.toInt, sc, kS.toInt).report)
+    case "rt-kmp" :: w0S :: maxS :: bS :: mS :: rest0 =>
+      // rt-kmp <W0> <maxLen> <builder letters per young tick> <matcher letters per young tick> [beta=..] (STRATEGY.md §3l): the
+      // de-amortised matcher (Kaplan–Tarjan steques) on the banks of the switch, adversarial and every-length words
+      val sc = OverlapPal.schedArg(rest0)
+      val maxLen = maxS.toInt
+      val words = OverlapProfile.switchWords(maxLen, sc) ++ OverlapProfile.adversarialWords(maxLen, sc).take(150) ++ OverlapProfile.everyLengthWords(maxLen)
+      print(RtKmpProbe.run(words, w0S.toInt, sc, bS.toInt, mS.toInt))
+    case "life-work" :: kyS :: w0S :: maxS :: rest0 =>
+      // life-work <ky> <W0> <maxLen> [role flags] [beta=..] (STRATEGY.md §3k): per life of the young role (a birth to the next one),
+      // its busy steps and the cells they make by kind, on the build side and on the match side (the q2 bit), per tick of the life.
+      // A pipelined young role (a builder and a matcher in their own slots) needs at least (steps of a side) / (ticks of the life)
+      // slots for that side: these are the lower bounds, over the lives of the families
+      val sc = OverlapPal.schedArg(rest0)
+      val ro = RolePal.Options(youngPattern = RolePal.patternOf(rest0), youngReport = !rest0.contains("noacc"), fuseIn = rest0.contains("fuse"),
+        compact = rest0.contains("compact"), endAsEntry = rest0.contains("endent"), endOnce = rest0.contains("endonce"), sched = sc,
+        unfold = rest0.contains("unfold"), mergeTmp = rest0.contains("tmp"), lgap = rest0.contains("lgap"), merge2 = rest0.contains("merge2"),
+        merge3 = rest0.contains("merge3"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => rest0.contains(s"no$x")))
+      val m = RolePal.machine(kyS.toInt, 4, w0S.toInt, ro)
+      val maxLen = maxS.toInt
+      val words = OverlapProfile.switchWords(maxLen, sc) ++ OverlapProfile.adversarialWords(maxLen, sc).take(150) ++ OverlapProfile.everyLengthWords(maxLen)
+      val tg = RolePal.tagsOf(ro)
+      def kindOf(tag: Int): String =
+        if (tag == tg.LNODE || tag == tg.GNODE) { "list" } else if (tag == tg.KNODE) { "K" } else if (tag == tg.RNODE) { "R" }
+        else if (tag == tg.ENTRY || tag == tg.END) { "entry" } else if (tag == tg.IQC) { "queue" } else { "other" }
+      val kinds = Vector("entry", "R", "list", "K", "queue")
+      val young = m.regs.map(_._1).filter(_.startsWith("y_"))
+      final case class Life(ticks: Int, build: Int, matchS: Int, cells: Map[(String, String), Int])
+      val lives = Vector.newBuilder[Life]
+      for (w <- words) {
+        var pre: Lpm.State = Lpm.State(Map.empty, m.initTrue)
+        var layer = 0
+        var start = -1
+        var build = 0; var matchS = 0
+        val cells = scala.collection.mutable.HashMap.empty[(String, String), Int].withDefaultValue(0)
+        Lps.traceSlots(m, w) { (tick, slot, st) =>
+          if (slot == "CT") {
+            layer = 0
+            // CT's b0 or b1: a bank is born this tick, and the young role starts a new life
+            if (st.bits("b0") || st.bits("b1")) {
+              if (start >= 0) { lives += Life(tick - start, build, matchS, cells.toMap) }
+              start = tick; build = 0; matchS = 0; cells.clear()
+            }
+          }
+          layer += 1
+          if ((slot == "IN" || slot == "YU" || slot == "YN") && start >= 0) {
+            val changed = young.exists(r => !(pre.regs.getOrElse(r, null) eq st.regs.getOrElse(r, null))) || pre.bits.filter(_.startsWith("y_")) != st.bits.filter(_.startsWith("y_"))
+            if (changed) {
+              val side = if (pre.bits("y_q2")) { "match" } else { "build" }
+              if (side == "build") { build += 1 } else { matchS += 1 }
+              val seen = scala.collection.mutable.HashSet.empty[Lpm.RCell]
+              def visit(c: Lpm.RCell): Unit = if (c != null && c.tick == tick && c.layer == layer && c.tag > m.alphabet.length && !seen.contains(c)) { seen += c; (1 to 4).foreach(f => visit(c.fld(f))) }
+              young.foreach { r => val c = st.regs.getOrElse(r, null); if (!(pre.regs.getOrElse(r, null) eq c)) { visit(c) } }
+              seen.foreach(c => cells((side, kindOf(c.tag))) += 1)
+            }
+          }
+          pre = st
+        }
+      }
+      val ls = lives.result().filter(l => l.build + l.matchS > 0)
+      def stats(v: Vector[Double]): String = { val s = v.sorted; f"${v.sum / math.max(v.size, 1)}%.2f / ${s(math.min(s.size - 1, (0.95 * s.size).toInt))}%.2f / ${s.last}%.2f" }
+      println(s"life-work ${kyS}/4 W0 $w0S, ${words.size} words <= $maxLen, ${ls.size} young lives (complete ones: a birth to the next)")
+      println(s"  ticks per life (mean / p95 / max): ${stats(ls.map(_.ticks.toDouble))}")
+      println(s"  busy steps per tick of a life (mean / p95 / max): build ${stats(ls.map(l => l.build.toDouble / l.ticks))}; match ${stats(ls.map(l => l.matchS.toDouble / l.ticks))}; both ${stats(ls.map(l => (l.build + l.matchS).toDouble / l.ticks))}")
+      for (k <- kinds) {
+        println(s"  ${k.padTo(6, ' ')} cells per tick of a life (mean / p95 / max): build side ${stats(ls.map(l => l.cells.getOrElse(("build", k), 0).toDouble / l.ticks))}; match side ${stats(ls.map(l => l.cells.getOrElse(("match", k), 0).toDouble / l.ticks))}")
+      }
+    case "kind-profile" :: kyS :: w0S :: maxS :: rest0 =>
+      // kind-profile <ky> <W0> <maxLen> [role flags] [beta=..] (STRATEGY.md §3j): the young role's new cells by kind (list, K, R,
+      // entry, queue) and by the phase the step started in; per tick with young work: the cells of each kind (mean, 95th percentile,
+      // max), the longest run of consecutive young steps storing the same kind, and the busy width (young steps that changed state)
+      val sc = OverlapPal.schedArg(rest0)
+      val ro = RolePal.Options(youngPattern = RolePal.patternOf(rest0), youngReport = !rest0.contains("noacc"), fuseIn = rest0.contains("fuse"),
+        compact = rest0.contains("compact"), endAsEntry = rest0.contains("endent"), endOnce = rest0.contains("endonce"), sched = sc,
+        unfold = rest0.contains("unfold"), mergeTmp = rest0.contains("tmp"), lgap = rest0.contains("lgap"), merge2 = rest0.contains("merge2"),
+        merge3 = rest0.contains("merge3"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => rest0.contains(s"no$x")))
+      val m = RolePal.machine(kyS.toInt, 4, w0S.toInt, ro)
+      val maxLen = maxS.toInt
+      val words = OverlapProfile.switchWords(maxLen, sc) ++ OverlapProfile.adversarialWords(maxLen, sc).take(150) ++ OverlapProfile.everyLengthWords(maxLen)
+      val tg = RolePal.tagsOf(ro)
+      def kindOf(tag: Int): String =
+        if (tag == tg.LNODE || tag == tg.GNODE) { "list" } else if (tag == tg.KNODE) { "K" } else if (tag == tg.RNODE) { "R" }
+        else if (tag == tg.ENTRY || tag == tg.END) { "entry" } else if (tag == tg.IQC) { "queue" } else { "other" }
+      val kinds = Vector("list", "K", "R", "entry", "queue")
+      val young = m.regs.map(_._1).filter(_.startsWith("y_"))
+      val perTick = scala.collection.mutable.HashMap.empty[String, scala.collection.mutable.ArrayBuffer[Int]]
+      kinds.foreach(k => perTick(k) = scala.collection.mutable.ArrayBuffer.empty[Int])
+      val byPhase = scala.collection.mutable.HashMap.empty[(String, String), Long].withDefaultValue(0L)
+      val longestRun = scala.collection.mutable.HashMap.empty[String, Int].withDefaultValue(0)
+      val runLengths = scala.collection.mutable.HashMap.empty[String, scala.collection.mutable.ArrayBuffer[Int]]
+      kinds.foreach(k => runLengths(k) = scala.collection.mutable.ArrayBuffer.empty[Int])
+      val busyWidth = scala.collection.mutable.HashMap.empty[Int, Long].withDefaultValue(0L)
+      def phaseOf(st: Lpm.State): String = {
+        val q2 = st.bits("y_q2"); val q1 = st.bits("y_q1"); val q0 = st.bits("y_q0")
+        (if (q2) "match" else "build") + (if (q1 || q0) "-pop" else "")
+      }
+      for (w <- words) {
+        var pre: Lpm.State = Lpm.State(Map.empty, m.initTrue)
+        val count = scala.collection.mutable.HashMap.empty[String, Int].withDefaultValue(0)
+        var busy = 0
+        var layer = 0
+        val run = scala.collection.mutable.HashMap.empty[String, Int].withDefaultValue(0)
+        def closeRun(k: String): Unit = { val r = run(k); if (r > 0) { runLengths(k) += r; if (r > longestRun(k)) { longestRun(k) = r } }; run(k) = 0 }
+        Lps.traceSlots(m, w) { (tick, slot, st) =>
+          if (slot == "CT") { count.clear(); busy = 0; layer = 0 }
+          layer += 1
+          if (slot == "IN" || slot == "YU" || slot == "YN") {
+            // the cells made at this layer that the young registers now reach (through fields of such cells too)
+            val seen = scala.collection.mutable.HashSet.empty[Lpm.RCell]
+            def visit(c: Lpm.RCell): Unit = if (c != null && c.tick == tick && c.layer == layer && c.tag > m.alphabet.length && !seen.contains(c)) { seen += c; (1 to 4).foreach(f => visit(c.fld(f))) }
+            young.foreach { r => val c = st.regs.getOrElse(r, null); if (!(pre.regs.getOrElse(r, null) eq c)) { visit(c) } }
+            val made = seen.toVector.map(c => kindOf(c.tag))
+            val changed = young.exists(r => !(pre.regs.getOrElse(r, null) eq st.regs.getOrElse(r, null))) || pre.bits.filter(_.startsWith("y_")) != st.bits.filter(_.startsWith("y_"))
+            if (changed) { busy += 1 }
+            val ph = phaseOf(pre)
+            made.foreach { k => count(k) += 1; byPhase((ph, k)) += 1 }
+            // runs, per kind: consecutive young steps that each make a cell of that kind
+            for (k <- kinds) { if (made.contains(k)) { run(k) += 1 } else { closeRun(k) } }
+          }
+          if (slot == "OUT") { if (busy > 0) { kinds.foreach(k => perTick(k) += count(k)); busyWidth(busy) += 1 } }
+          pre = st
+        }
+        kinds.foreach(closeRun)
+      }
+      def pct(v: scala.collection.mutable.ArrayBuffer[Int], p: Double): Int = { val s = v.sorted; if (s.isEmpty) 0 else s(math.min(s.size - 1, (p * s.size).toInt)) }
+      val ticks = perTick("list").size
+      println(s"kind-profile ${kyS}/4 W0 $w0S, ${words.size} words <= $maxLen, $ticks ticks with young work")
+      for (k <- kinds) {
+        val v = perTick(k)
+        val mean = v.sum.toDouble / math.max(ticks, 1)
+        val rl = runLengths(k)
+        println(f"  $k%-6s per busy tick: mean $mean%.2f, p95 ${pct(v, 0.95)}%d, p99 ${pct(v, 0.99)}%d, max ${v.max}%d; runs: mean ${rl.sum.toDouble / math.max(rl.size, 1)}%.1f, p99 ${pct(rl, 0.99)}%d, max ${longestRun(k)}%d")
+      }
+      println("  new cells by the phase the step started in: " + byPhase.toVector.sortBy(x => (x._1._1, x._1._2)).map { case ((ph, k), n) => s"$ph/$k:$n" }.mkString(" "))
+      val bt = busyWidth.values.sum.toDouble
+      println("  busy young steps per tick (ticks with any): " + busyWidth.toVector.sortBy(_._1).map { case (k, n) => f"$k:${100 * n / bt}%.1f%%" }.mkString(" "))
+    case "young-alloc" :: kyS :: w0S :: maxS :: rest0 =>
+      // young-alloc <ky> <W0> <maxLen> [role flags] [beta=..] (STRATEGY.md §3g): over the switch, adversarial and every-length words,
+      // the young steps (IN's and the YU slots') that store a new cell, that act without one, and that do nothing; and per tick the
+      // number of storing steps (a layer that may not store a cell can only take the second kind of work)
+      val sc = OverlapPal.schedArg(rest0)
+      val ro = RolePal.Options(youngPattern = RolePal.patternOf(rest0), oldPattern = RolePal.patternOf(rest0, "opat"), freePops = rest0.contains("freepops"), youngReport = !rest0.contains("noacc"), fuseIn = rest0.contains("fuse"),
+        compact = rest0.contains("compact"), endAsEntry = rest0.contains("endent"), endOnce = rest0.contains("endonce"), sched = sc,
+        unfold = rest0.contains("unfold"), mergeTmp = rest0.contains("tmp"), lgap = rest0.contains("lgap"), merge2 = rest0.contains("merge2"),
+        merge3 = rest0.contains("merge3"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => rest0.contains(s"no$x")))
+      val m = RolePal.machine(kyS.toInt, 4, w0S.toInt, ro)
+      val maxLen = maxS.toInt
+      val words = OverlapProfile.switchWords(maxLen, sc) ++ OverlapProfile.adversarialWords(maxLen, sc).take(150) ++ OverlapProfile.everyLengthWords(maxLen)
+      // "old" among the flags: the old role's steps (IN's and the OU slots') instead
+      val px = if (rest0.contains("old")) { "o_" } else { "y_" }
+      val roleSlots = if (px == "o_") { Set("IN", "OU", "ON") } else { Set("IN", "YU", "YN") }
+      val young = m.regs.map(_._1).filter(_.startsWith(px))
+      var storing = 0L; var acting = 0L; var idle = 0L
+      val perTick = scala.collection.mutable.HashMap.empty[Int, Long].withDefaultValue(0L)
+      for (w <- words) {
+        var pre: Lpm.State = Lpm.State(Map.empty, m.initTrue)
+        var count = 0
+        Lps.traceSlots(m, w) { (tick, slot, st) =>
+          if (slot == "CT") { count = 0 }
+          if (roleSlots(slot)) {
+            val fresh = young.exists { r => val c = st.regs.getOrElse(r, null); c != null && c.tick == tick && c.tag > m.alphabet.length && !(pre.regs.getOrElse(r, null) eq c) }
+            val changed = young.exists(r => !(pre.regs.getOrElse(r, null) eq st.regs.getOrElse(r, null))) || pre.bits.filter(_.startsWith(px)) != st.bits.filter(_.startsWith(px))
+            if (fresh) { storing += 1; count += 1 } else if (changed) { acting += 1 } else { idle += 1 }
+          }
+          if (slot == "OUT") { perTick(count) += 1 }
+          pre = st
+        }
+      }
+      val all = (storing + acting + idle).toDouble
+      println(f"young-alloc ${kyS}/4 W0 $w0S role $px, ${words.size} words <= $maxLen: steps storing a new cell ${100 * storing / all}%.1f%%, acting without one ${100 * acting / all}%.1f%%, idle ${100 * idle / all}%.1f%%")
+      val busy = perTick.filter(_._1 > 0).values.sum.toDouble
+      println(s"  storing steps per tick (ticks with any): " + perTick.toVector.sortBy(_._1).filter(_._1 > 0).map { case (k, n) => f"$k:${100 * n / busy}%.1f%%" }.mkString(" "))
+    case "cap-trace" :: kyS :: w0S :: word :: rest0 =>
+      // cap-trace <ky> <W0> <word | b<k>a<m>b> [role flags] [beta=..] [ypat=..] (STRATEGY.md §3g): per tick, what each young slot
+      // after IN did — a step that changed the young state (+), a stall or idle step (.) — and whether the full step there would
+      // have stored a new cell (A: allocating work waited at an N slot)
+      val sc = OverlapPal.schedArg(rest0)
+      val ro = RolePal.Options(youngPattern = RolePal.patternOf(rest0), oldPattern = RolePal.patternOf(rest0, "opat"), freePops = rest0.contains("freepops"), youngReport = !rest0.contains("noacc"), fuseIn = rest0.contains("fuse"),
+        compact = rest0.contains("compact"), endAsEntry = rest0.contains("endent"), endOnce = rest0.contains("endonce"), sched = sc,
+        unfold = rest0.contains("unfold"), mergeTmp = rest0.contains("tmp"), lgap = rest0.contains("lgap"), merge2 = rest0.contains("merge2"),
+        merge3 = rest0.contains("merge3"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => rest0.contains(s"no$x")))
+      val m = RolePal.machine(kyS.toInt, 4, w0S.toInt, ro)
+      val w = "^b(\\d+)a(\\d+)b$".r.findFirstMatchIn(word).map(g => "b" * g.group(1).toInt + "a" * g.group(2).toInt + "b").getOrElse(word)
+      val regNames = m.regs.map(_._1)
+      val young = regNames.filter(_.startsWith("y_"))
+      var st = Lpm.State(Map.empty, m.initTrue)
+      var prevSep: Lpm.RCell = null
+      for (i <- (w.length - 1) to 0 by -1) {
+        val tick = w.length - i
+        val in = new Lpm.RCell(m.alphabet.indexOf(w.charAt(i)), prevSep, null, null, null, -1, -1, tick)
+        val sep = new Lpm.RCell(m.alphabet.length, in, null, null, null, -2, -1, tick)
+        val line = new StringBuilder
+        for (t <- 1 to m.budget) {
+          val pre = st
+          st = Lpm.unitStep(m.slotAt(t), regNames, m.bits, st, in, sep, t == 1, t, tick)
+          val slot = m.schedule(t - 1)
+          if (slot == "YU" || slot == "YN") {
+            val changed = young.exists(r => !(pre.regs.getOrElse(r, null) eq st.regs.getOrElse(r, null))) || pre.bits.filter(_.startsWith("y_")) != st.bits.filter(_.startsWith("y_"))
+            val wouldAlloc = slot == "YN" && {
+              val full = Lpm.unitStep(m.slots("YU"), regNames, m.bits, pre, in, sep, false, t, tick)
+              full.regs.values.exists(c => c != null && c.tick == tick && c.layer == t)
+            }
+            line ++= (if (changed) { if (slot == "YN") "n" else "+" } else if (wouldAlloc) { "A" } else { "." })
+          }
+        }
+        val qs = Vector("y_q2", "y_q1", "y_q0").map(b => if (st.bits(b)) '1' else '0').mkString
+        println(f"tick $tick%4d young $line  q=$qs src=${if (st.regs.getOrElse("y_src", null) == null) "-" else "*"} out=${st.bits("out")}")
+        prevSep = sep
+      }
+    case "alloc-profile" :: kyS :: koS :: w0S :: maxS :: rest0 =>
+      // alloc-profile <ky> <ko> <W0> <maxLen> [role flags] [beta=..] (STRATEGY.md §3f): per tick, the cells born in the tick
+      // that outlive it (reachable from a register at its end), by tag, against the sites of the tag. A pointer addressed by
+      // (tick, index within the tick) needs at least that many alternatives, so this bounds any re-addressing of the cells
+      val sc = OverlapPal.schedArg(rest0)
+      val ro = RolePal.Options(youngPattern = RolePal.patternOf(rest0), oldPattern = RolePal.patternOf(rest0, "opat"), freePops = rest0.contains("freepops"), youngReport = !rest0.contains("noacc"), fuseIn = rest0.contains("fuse"), compact = rest0.contains("compact"),
+        endAsEntry = rest0.contains("endent"), endOnce = rest0.contains("endonce"), sched = sc, unfold = rest0.contains("unfold"), mergeTmp = rest0.contains("tmp"),
+        lgap = rest0.contains("lgap"), merge2 = rest0.contains("merge2"),
+        merge3 = rest0.contains("merge3"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => rest0.contains(s"no$x")))
+      val maxLen = maxS.toInt
+      val m = RolePal.machine(kyS.toInt, koS.toInt, w0S.toInt, ro)
+      val words = OverlapProfile.switchWords(maxLen, sc) ++ OverlapProfile.adversarialWords(maxLen, sc).take(150) ++ OverlapProfile.everyLengthWords(maxLen)
+      val tags = m.sitesOfTag.keys.toVector.sorted
+      val hist = scala.collection.mutable.HashMap.empty[(Int, Int), Long].withDefaultValue(0L)
+      for (w <- words) {
+        Lps.trace(m, w) { (tick, st) =>
+          val seen = scala.collection.mutable.HashSet.empty[Lpm.RCell]
+          def visit(c: Lpm.RCell): Unit = if (c != null && c.tick == tick && c.tag > m.alphabet.length && seen.add(c)) { (1 to 4).foreach(f => visit(c.fld(f))) }
+          st.regs.values.foreach(visit)
+          val byTag = seen.toVector.groupBy(_.tag).view.mapValues(_.size).toMap
+          for (tag <- tags) { hist((tag, byTag.getOrElse(tag, 0))) += 1 }
+        }
+      }
+      println(s"alloc-profile ${kyS}/${koS} W0 $w0S, ${words.size} words <= $maxLen: cells born in a tick that outlive it, per tick")
+      for (tag <- tags) {
+        val counts = hist.collect { case ((t, k), n) if t == tag => k -> n }.toVector.sortBy(_._1)
+        val ticks = counts.map(_._2).sum.toDouble
+        val mean = counts.map { case (k, n) => k * n }.sum / ticks
+        println(f"  tag $tag%2d: sites ${m.sitesOfTag(tag).size}%2d, max per tick ${counts.filter(_._2 > 0).map(_._1).max}%2d, mean $mean%.2f; histogram ${counts.map { case (k, n) => s"$k:$n" }.mkString(" ")}")
+      }
+    case "step-bigrams" :: kyS :: koS :: w0S :: family :: rest0 =>
+      // step-bigrams <ky> <ko> <W0> random <count> <maxLen> | every <maxLen> [role flags] [beta=..]: the branch of every young step
+      // (YU/YUF slots, from the guards on the state before it) and the pairs of consecutive busy young steps (STRATEGY.md §3e, E3)
+      val sc = OverlapPal.schedArg(rest0)
+      val ro = RolePal.Options(youngPattern = RolePal.patternOf(rest0), oldPattern = RolePal.patternOf(rest0, "opat"), freePops = rest0.contains("freepops"), youngReport = !rest0.contains("noacc"), fuseIn = rest0.contains("fuse"), compact = rest0.contains("compact"),
+        endAsEntry = rest0.contains("endent"), endOnce = rest0.contains("endonce"), sched = sc, unfold = rest0.contains("unfold"), mergeTmp = rest0.contains("tmp"),
+        lgap = rest0.contains("lgap"), merge2 = rest0.contains("merge2"),
+        merge3 = rest0.contains("merge3"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => rest0.contains(s"no$x")))
+      val nums = rest0.filter(_.forall(_.isDigit)).map(_.toInt)
+      val words = family match {
+        case "random" => OverlapProfile.randomWords(nums(0), nums(1))
+        case _ => OverlapProfile.everyLengthWords(nums(0))
+      }
+      val m = RolePal.machine(kyS.toInt, koS.toInt, w0S.toInt, ro)
+      val br = RolePal.youngBranches(ro)
+      val uni = scala.collection.mutable.HashMap.empty[String, Long]
+      val bi = scala.collection.mutable.HashMap.empty[(String, String), Long]
+      for (w <- words) {
+        var prev: Lpm.State = null
+        var last: String = ""
+        Lps.traceSlots(m, w) { (_, slot, st) =>
+          if ((slot == "YU" || slot == "YUF") && prev != null) {
+            val k = br.collectFirst { case (name, g) if Lpm.holds(g, prev) => name }.getOrElse("idle")
+            uni(k) = uni.getOrElse(k, 0L) + 1
+            if (k == "popG") {
+              import Lpm.E.{Fld, Reg}
+              import Lpm.C.{IsNull, And, TagIs}
+              val gE = Fld(Reg("y_L"), 1)
+              val empty = And(IsNull(Fld(gE, 2)), And(IsNull(Fld(gE, 3)), IsNull(Fld(gE, 4))))
+              val kk = if (Lpm.holds(empty, prev)) { "+popG gE gap empty" } else { "+popG gE gap nonempty" }
+              uni(kk) = uni.getOrElse(kk, 0L) + 1
+              val ktag = if (Lpm.holds(TagIs(Fld(gE, 2), GapKmp.roleTagsP3.GNODE), prev)) { "+popG gE.hL is GNODE" } else { "+popG gE.hL other" }
+              uni(ktag) = uni.getOrElse(ktag, 0L) + 1
+            }
+            if (k != "idle") { if (last.nonEmpty) { bi((last, k)) = bi.getOrElse((last, k), 0L) + 1 }; last = k }
+          }
+          if (slot == "CT" && (st.bits("b0") || st.bits("b1"))) { last = "" }   // a new young life
+          prev = st
+        }
+      }
+      val busy = uni.filter(k => k._1 != "idle" && !k._1.startsWith("+")).values.sum
+      println(f"${words.size} words; young busy steps $busy, idle ${uni.getOrElse("idle", 0L)}")
+      for ((k, c) <- uni.toVector.sortBy(-_._2)) { println(f"  $k%-15s $c%10d ${100.0 * c / math.max(busy, 1)}%6.2f%%") }
+      println("pairs of consecutive busy young steps (top 25):")
+      for (((a, b), c) <- bi.toVector.sortBy(-_._2).take(25)) { println(f"  $a%-15s -> $b%-15s $c%10d ${100.0 * c / math.max(busy, 1)}%6.2f%%") }
     case "peg-cse-probe" :: path :: topS :: thresholdS :: _ =>
       // peg-cse-probe <grammar.peg> <top> <threshold>: the sub-expressions whose naming as a rule saves the most nodes (PegCse)
       val g = Grammar.parse(new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path)), "UTF-8"))
@@ -548,18 +838,20 @@ object Main {
       // pal3: LpsWarmup.machine(m, f, W0), fallback below 2 W0; overlap: OverlapPal.machine(a, b, W0), fallback below 3 W0 / 2
       val trie = rest.contains("trie")
       // role options: noacc (no young acc), tmp (rv/ks merged), fuse (first old and young steps fused into IN)
-      val roleFlags = Set("noacc", "tmp", "fuse", "compact", "rk", "endent", "endonce", "p3", "star", "unfold", "mirror")
-      val ropts = RolePal.Options(youngReport = !rest.contains("noacc"), mergeTmp = rest.contains("tmp"), fuseIn = rest.contains("fuse"), compact = rest.contains("compact"),
+      val roleFlags = Set("noacc", "tmp", "fuse", "compact", "rk", "endent", "endonce", "p3", "star", "unfold", "mirror", "pairs", "recolour", "lgap", "merge2", "merge3", "noU", "noG", "noR", "noR1", "noR2", "sound", "pts", "freepops")
+      val ropts = RolePal.Options(youngPattern = RolePal.patternOf(rest), oldPattern = RolePal.patternOf(rest, "opat"), freePops = rest.contains("freepops"), youngReport = !rest.contains("noacc"), mergeTmp = rest.contains("tmp"), fuseIn = rest.contains("fuse"), compact = rest.contains("compact"),
         sharedRK = rest.contains("rk"), endAsEntry = rest.contains("endent"), endOnce = rest.contains("endonce"), rearInP3 = rest.contains("p3"),
-        sched = OverlapPal.schedArg(rest), unfold = rest.contains("unfold"))
-      val args = rest.filter(x => x != "trie" && !roleFlags(x) && !x.startsWith("beta="))
+        sched = OverlapPal.schedArg(rest), unfold = rest.contains("unfold"), pairs = rest.contains("pairs"), lgap = rest.contains("lgap"),
+        merge2 = rest.contains("merge2"), merge3 = rest.contains("merge3"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => rest.contains(s"no$x")))
+      val args = rest.filter(x => x != "trie" && !roleFlags(x) && !x.startsWith("beta=") && !x.startsWith("ypat=") && !x.startsWith("opat="))
       val isOverlap = kind == "overlap" || kind == "gap" || kind == "role"
       val coreKind: OverlapPal.CoreKind = if (kind == "gap") { OverlapPal.GapCore } else { OverlapPal.Kmp2Core }
       def mk(ms: Int, fs: Int, w0: Int): Lps.Machine =
         if (kind == "role") { RolePal.machine(ms, fs, w0, ropts) } else if (isOverlap) { OverlapPal.machine(ms, fs, w0, coreKind) } else { LpsWarmup.machine(ms, fs, w0) }
       def firstAnswer(w0: Int): Int = if (isOverlap) { OverlapPal.firstAnswer(w0, ropts.sched) } else { LpsWarmup.firstAnswer(w0) }
       def opts(w0: Int) = LpsCode.Options(fallbackBelow = Some(firstAnswer(w0)), minBirth = w0, dispatch = if (trie) { LpsCode.Trie } else { LpsCode.Direct },
-        codeByStar = rest.contains("star"), mirrorFallback = rest.contains("mirror"))
+        codeByStar = rest.contains("star"), mirrorFallback = rest.contains("mirror"), recolour = rest.contains("recolour"),
+        sound = rest.contains("sound"), pointsTo = rest.contains("pts"))
       // the colours do not depend on the controller; the staged clock needs its smallest W0
       def colours(ms: Int, fs: Int): Int = LpsCode.compileMeta(mk(ms, fs, if (ropts.sched.half) { 2 } else { math.max(8, ropts.sched.minW0) })).coloring.count
       // W0: "auto" = the power of two >= colours; "auto3" = the smallest 3 * 2^k (k >= 2) >= colours (a base-3 clock, RolePal)
@@ -675,8 +967,9 @@ object Main {
           // r<ky>/<ko>[:flag,flag] with the role options noacc, tmp, fuse
           val (sizes, flags) = cfg.drop(1).split(":", 2) match { case Array(a) => (a, Set.empty[String]); case Array(a, f) => (a, f.split(",").toSet) }
           val Array(ky, ko) = sizes.split("/").map(_.toInt)
-          val ro = RolePal.Options(youngReport = !flags("noacc"), mergeTmp = flags("tmp"), fuseIn = flags("fuse"), compact = flags("compact"),
-            sharedRK = flags("rk"), endAsEntry = flags("endent"), endOnce = flags("endonce"), rearInP3 = flags("p3"), sched = sc, unfold = flags("unfold"))
+          val ro = RolePal.Options(youngPattern = RolePal.patternOf(flags), oldPattern = RolePal.patternOf(flags, "opat"), freePops = flags.contains("freepops"), youngReport = !flags("noacc"), mergeTmp = flags("tmp"), fuseIn = flags("fuse"), compact = flags("compact"),
+            sharedRK = flags("rk"), endAsEntry = flags("endent"), endOnce = flags("endonce"), rearInP3 = flags("p3"), sched = sc, unfold = flags("unfold"),
+            lgap = flags("lgap"), merge2 = flags("merge2"), merge3 = flags("merge3"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => flags(s"no$x")))
           OverlapProfile.grid(cfg, RolePal.machine(ky, ko, minAnchor, ro), minAnchor, true, families, threadsS.toInt, OverlapProfile.Roles, ro.fuseIn, sc)
         } else {
           // a/b/old[:unfold]
@@ -701,9 +994,9 @@ object Main {
       // role options for the role machine (as in lps-code): noacc fuse compact endent endonce
       val roleOpt = Set("noacc", "fuse", "compact", "endent", "endonce", "unfold")
       val sc = OverlapPal.schedArg(rest0)
-      val ro = RolePal.Options(youngReport = !rest0.contains("noacc"), fuseIn = rest0.contains("fuse"), compact = rest0.contains("compact"),
+      val ro = RolePal.Options(youngPattern = RolePal.patternOf(rest0), oldPattern = RolePal.patternOf(rest0, "opat"), freePops = rest0.contains("freepops"), youngReport = !rest0.contains("noacc"), fuseIn = rest0.contains("fuse"), compact = rest0.contains("compact"),
         endAsEntry = rest0.contains("endent"), endOnce = rest0.contains("endonce"), sched = sc, unfold = rest0.contains("unfold"))
-      val rest = rest0.filterNot(x => x == "gap" || x == "role" || roleOpt(x) || x.startsWith("old=") || x.startsWith("dump=") || x.startsWith("beta="))
+      val rest = rest0.filterNot(x => x == "gap" || x == "role" || roleOpt(x) || x.startsWith("old=") || x.startsWith("dump=") || x.startsWith("beta=") || x.startsWith("ypat=") || x.startsWith("opat=") || x == "freepops")
       val dumped = Vector.newBuilder[String]
       val coreKind: OverlapPal.CoreKind = if (rest0.contains("gap")) { OverlapPal.GapCore } else { OverlapPal.Kmp2Core }
       val (a, b) = (rest(0).toInt, rest(1).toInt)

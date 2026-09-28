@@ -14,8 +14,9 @@ inliner gives 1,377 (×2 nodes), 1,194 (×3), 1,120 (×4), **999 (×9.75, 1,945,
 **Correction (§3b): that machine, and both 999-rule grammars made from it, answer false on a 79-letter palindrome.** The
 grammar that replaces them (13/4, β 7/16, W₀ 64): 999 rules at ×4.40, 2,984,353 bytes; ×2 1,257, ×3 1,090, ×4 1,018.
 
-**Current best (§3d):** 12/4 + unfold + `tmp`, W₀ 128, mirrored fallback, common sub-expressions named: 996 rules at 472,260
-rhs nodes (×2.7), 2,033,703 bytes; ×2 1,146, ×3 968, ×4 910.
+**Current best (§3f):** the §3e machine (11/4 + unfold + `tmp` + `lgap` + the unfold-then-popL merge, β 13/32, W₀ 128, mirrored
+fallback) compiled with `sound` and points-to domains, common sub-expressions named: 996 rules at 349,849 rhs nodes (×2.45),
+1,542,201 bytes; ×2.2 1,044, ×3 933. (§3e: 994 rules at 438,487; §3d: 996 at 472,260.)
 
 ## 1. Diagnosis: what survives the inliner, and why (measured)
 
@@ -416,6 +417,487 @@ a flip of it, the Thue–Morse palindrome and a flip, at each length: the fallba
 | §3b (13/4, W₀ 64) | 724,780 nodes (×4.40) | 2,984,353 |
 | §3c (12/4 + unfold + `tmp`, W₀ 128, naming) | 531,531 nodes (×3.5) | 2,283,029 |
 | **§3d (+ mirrored fallback)** | **472,260 nodes (×2.7)** | **2,033,703** |
+
+## 3e. Looking for a dramatic cut: seven ideas measured (2026-09-27)
+
+The 996 rules of §3d are about 250 per-layer registers (young ≈ 18 per layer, every pointer twice: its value `x` and its colour
+code `x_c`), 212 site fields, and about 500 shared helpers (conditions K, reads X, named sub-expressions, `Tail`). A young
+layer is worth a lot: the same machine with young 12, 11, 10 reaches 999 rules at 528,756, 398,492 and 301,314 rhs nodes
+(−25 % per layer). Seven ideas, each implemented and measured (every number below is measured):
+
+| # | idea | result |
+|---|---|---|
+| A | **two steps per slot** (`pairs`: `Lpm.fuse` of two young/old steps) | worse: the same 3,648 compact rules but 208,896 nodes; 999 rules at 952,966 nodes. The second step reads the first step's registers many times, so their expressions are copied; the greedy kept those registers for a reason |
+| B | **colours by use** (`recolour`: the most referenced colour gets the shortest `Tail_c`) | no effect (999 at 528,984): `Tail_c` is a chain of two-node rules, so its price hardly depends on c |
+| C | **no RHS cap** (`maxRhs` 4,000,000) | no effect: the cap of 65,536 never binds |
+| D | **a look at the steps** (E3, `step-bigrams`: the branch of every young step from its guards) | reversal chains 19 % of the young steps; `popG → takePop` 6 %, of which 79 % unfold a GNODE whose entry has an empty gap |
+| E | **`lgap`**: an entry with an empty gap gets an LNODE, not a GNODE (gap(cur) ++ [cur] ++ L = [cur] ++ L) | free (+66 nodes at 999) and −5 … −16 % young steps; alone not enough for young 11 |
+| F | **merging a pop with the pop that always follows it** without new cells (`merge2`: U = mismatch-unfold then popL, G = popG then popL, R = R1 + R2, the last two entries of a reversal (R1 `rev`, R2 `takeRev`); `merge3`: splice shortcuts, build + takeRev1) | young 11 at β 7/16 needs R1 for the period-3 words and U (or G) for the random ones; the cheapest combination that passes the seed-21 set, `lgap` + R1 + U, reaches 999 at 520,517 nodes (−1.6 %), because the merges' nested reads cost about what the saved layer is worth; all of `merge2` 865,767, `merge3` 1.49 M |
+| G | **old 3** with the merges | at young 12, `lgap` alone fails (n 357); `lgap` + R1 + U passes every length ≤ 1,025; by the young-11 costs those merges cost more than an old layer (estimate) |
+
+Two findings on the way:
+
+- **A literal `False` guard is compiled in.** The first measurements of E and F were inflated: an option that was off still
+  left `p.when(False)`, `(False, e)` cases and `all(…, True)` in the step, and the compiler turned them into rules and nodes (the
+  12/4 compact grammar grew from 3,648 to 3,792–3,856 rules with every option off). The options now add branches and cases only
+  when they are on; a test checks that the §3d compact grammar keeps its sha256.
+- **Balanced anchors help the merges.** At β 13/32 (A and B at 4.92 and 4.74 letters per tick instead of 4.57 and 5.11), young 11
+  passes with `lgap` + U alone (at 7/16 it needs R1 as well), and U is the cheapest merge.
+
+### The grammar of §3e: role 11/4, `lgap` + U, β 13/32, W₀ 128
+
+Role 11/4, configuration A + `unfold` + `tmp` + `lgap` + `merge2` without G and R (the mismatch-unfold-then-popL merge),
+β = 13/32, W₀ = 128 (first machine answer 180), mirrored fallback. Rates (measured): every length ≤ 1,025 with seeds 5 and 7,
+the three seeds (3,297 + 3,706 + 6,297 words), 25 sampled lengths ≤ 9,000 and every length ≤ 2,049: all pass (the last two on 283 and 14,326 words). Compact
+3,529 rules, 171,517 nodes, 26 colours; greedy 999 rules at 458,189 nodes. With named common sub-expressions:
+
+| budget | rules | rhs nodes | bytes |
+|---|---:|---:|---:|
+| ×2 | 1,098 | 342,699 | 1,577,434 |
+| ×2.4 | 1,019 | 411,109 | 1,816,505 |
+| ×2.5 | 1,003 | 428,030 | 1,877,649 |
+| **×2.56** | **994** | **438,487** | **1,905,775** |
+| ×3 | 951 | 512,816 | 2,183,116 |
+
+`out/anchors-role-y11-o4-w128-n994.peg.gz`: **994 rules, 438,487 rhs nodes, 1,905,775 bytes** (§3d: 996 rules at 472,260 nodes,
+2,033,703 bytes; at equal budgets −21 to −48 rules). Checks: no undefined reference; re-parsed = oracle on all words ≤ 9; the
+Rust runner gives 0 mismatches on the 168 words of §3c and the 799 words of every length 3–200. Still an observation, not a proof.
+
+**Not dramatic.** Each saved layer is paid back by the branch logic it needs: a merge adds nested reads, and a read costs a
+dispatch over every site its pointer may reach. The per-layer cost of branching, not the number of steps, is now the limit.
+
+| grammar | fewer than 1,000 rules at | bytes |
+|---|---|---:|
+| §3b (13/4, W₀ 64) | 724,780 nodes (×4.40) | 2,984,353 |
+| §3c (12/4 + unfold + `tmp`, W₀ 128, naming) | 531,531 nodes (×3.5) | 2,283,029 |
+| §3d (+ mirrored fallback) | 472,260 nodes (×2.7) | 2,033,703 |
+| **§3e (11/4 + `lgap` + U, β 13/32)** | **438,487 nodes (×2.56)** | **1,905,775** |
+
+Reproduce (from `research/`):
+
+```sh
+sbt "run lps-code export role 11 4 128 C.peg noacc fuse compact endent endonce star unfold tmp mirror lgap merge2 noG noR beta=13/32" \
+    "run peg-cse-improve C.peg 2.56 65536 60 1000 10 out.peg out.json"
+sbt "run step-bigrams 12 4 128 every 300 noacc fuse compact endent endonce unfold tmp beta=7/16"   # D (add lgap for E)
+```
+
+## 3f. Cutting the branching of one read (2026-09-27)
+
+§3e ended on the price of branching: a read `Fld(x, f)` compiles to one arm per site x may point to
+(`&(x_c Tail_c) x C_l_i_pf`), and every read dispatches twice (the extent and the colour code). Where the tokens of the
+§3e compact grammar go (measured, 131,500 tokens, 12,213 arms):
+
+| | share of the grammar |
+|---|---:|
+| dispatch arms | 56.3 % |
+| arms inside the `_c` colour-code rules | 24.8 % |
+| tag-bit tests inside field-read arms | 6.9 % |
+| arms to old-role (OU) sites inside reads of young layers | 4.5 % |
+| pure tag-test dispatches (`TagIs`) | 2.8 % |
+
+Two of these cost nothing to remove, and the machine does not change (its steps, and so its rates, are those of §3e):
+
+- **The tag tests were tautologies.** A list node is an LNODE or a GNODE, and the arm tested `&(!C_2_5_g0 / C_2_5_g0)`:
+  always true, but it kept the tag-bit rules, and the guard rules behind them, alive. The colour already picks a site of
+  the pointer's domain, and the pointer only holds cells of its kinds (`Lps.run` checks that after every slot), so a field
+  read needs no tag test (`sound`; a tag test at a site with the tested tag only is the colour test alone).
+- **Domains came from tags.** `sitesOf(kinds)` gives every site that can make the tag, so a young read also branched to
+  the old role's sites, although the young registers are reset at every birth. `PointsTo` computes per register and per
+  (site, field) the sites whose cells it may hold (an Andersen-style fixpoint over the machine, cut to the kinds' sites);
+  with `pts` a read dispatches over those. A test checks the sets after every slot on the words ≤ 300 of §3e and that no
+  young register may hold an old-role site. The colours fall from 26 to 22.
+
+Measured on the §3e machine (role 11/4, `lgap` + U, β 13/32, W₀ 128, mirrored fallback):
+
+| option | compact rules | compact nodes | colours | fewer than 1,000 rules at | bytes |
+|---|---:|---:|---:|---|---:|
+| none (§3e) | 3,529 | 171,517 | 26 | 994 at 438,487 nodes (×2.56) | 1,905,775 |
+| `sound` | 3,529 | 161,077 | 26 | 987 at 426,202 (×2.65) | 1,849,149 |
+| `pts` | 3,521 | 153,047 | 22 | 992 at 373,810 (×2.45) | 1,619,754 |
+| **`sound pts`** | **3,521** | **143,051** | **22** | **996 at 349,849 (×2.45)** | **1,542,201** |
+
+With both, the arms fall from 12,213 to 9,736; the old-role arms of young reads from 4.5 % to 0.2 %, the tag bits in arms
+from 6.9 % to 1.0 %. The curve with naming: ×2.2 1,044, ×2.35 1,018, ×2.45 996, ×2.56 984, ×2.8 949, ×3 933 (428,580
+nodes, where §3e needed 438,487 for 994). `out/anchors-role-y11-o4-w128-pts-n996.peg.gz`: **996 rules, 349,849 rhs nodes,
+1,542,201 bytes** (−20 % nodes against §3e). Checks: no undefined reference; re-parsed = oracle on all words ≤ 9; the Rust
+runner gives 0 mismatches on the 168 words of §3c, 796 words of every length 3–200 and every counterexample of both resource
+files. The machine is the §3e one, so its rates stand. Still an observation, not a proof.
+
+What is left is the inherent part. The largest group of dispatches now branches over 11 sites, one per young layer (IN and
+the ten YU): a young cell can be made at any layer, so a pointer must name the layer. `tagpar` (the tag in the colour's parity,
+one test per tag test) was not built: pure tag dispatches are 3.0 % of the compact grammar, and doubling the colours
+(22 → up to 44) would add about 22 `Tail`/`Code` helper rules, which the 1,000-rule budget cannot spare.
+
+**How far re-addressing could go** (`alloc-profile 11 4 128 400 …`, measured on 3,283 words ≤ 400): per tick, the cells born
+in the tick that outlive it, by tag. The mean is 0.7–1.5 per tag, but every tag has ticks in which every one of its sites keeps
+a cell (maximum = sites: 17, 11, 15, 11, 15, 11), in the young role's catch-up. A pointer addressed by (tick, index within
+the tick) needs that many alternatives, so no re-addressing of the cells gets below one arm per layer. A smaller fan-out needs
+a machine that caps the cells a tick may keep (for example the builds per tick); that changes the rates and is the next
+structural step, not taken here.
+
+Reproduce (from `research/`):
+
+```sh
+sbt "run lps-code export role 11 4 128 C.peg noacc fuse compact endent endonce star unfold tmp mirror lgap merge2 noG noR sound pts beta=13/32" \
+    "run peg-cse-improve C.peg 2.45 65536 60 1000 10 out.peg out.json"
+```
+
+## 3g. Capping the cells a tick may keep (2026-09-27)
+
+§3f left one arm per young layer: a young cell can be born at any of the 11 young layers, and every read of a young pointer
+branches over them. The next step was a machine that caps the cells a tick may keep. Two ways were weighed:
+
+- **Rank addressing** (a per-tick allocation counter; a cell named by its tick and its rank among the tick's allocations). A
+  read branches over the K ranks, but finding the layer of rank k moves into shared bus rules, one per (rank, site, field).
+  Estimated on the §3f compact grammar's dispatches: arms 99 % of today at K = 6, 87 % at 5; a gain only at K ≤ 4, below the
+  catch-up rate of 2/β ≈ 4.9 letters per tick. Not built.
+- **Fixed allocating layers** (built). `GapKmp.Core(noAlloc = true)` has no allocation site; in place of every branch that
+  would store a new cell it has a stall (an empty body: the exclusive guards keep every later branch out). `RolePal.Options.
+  youngPattern` (`ypat=`, one letter per young slot after IN: `A` the full step, `N` the non-allocating one) and `oldPattern`
+  (`opat=`) place them. Domains shrink to the allocating layers with no bus (arms estimated at 60 % with 5 of 10). `CapSuite`
+  checks that an N layer stalls exactly where the full step would store a cell and otherwise acts as the full step, and that
+  the code backend compiles N slots to the interpreter's language.
+
+**Every pattern fails the rates** (measured, `pool-grid 128 … beta=13/32 every=1025`, the §3e flags):
+
+| machine | young pattern after IN | result |
+|---|---|---|
+| 11/4 | `ANANANANAN`, `ANANAANANA`, `ANAAANAANA` (5–7 of 10 allocating) | false at n 180 (the first A life, h 128) |
+| 12/4 | `NANANANANAN`, `ANANANANANA` | false at n 180 |
+| 13/4 | `NANANANNANAN`, `ANANANANANAN` (6 of 12) | false at n 180 |
+| 11/4, old `ANN`, `NAN` / `NNA`, `NNN` | (the young full) | false at n 211 / 205 |
+
+Why, two levels down (`cap-trace`, `young-alloc`, measured):
+
+- **The young role is late at its first answer.** On `b a^178 b` the 13/4 machine builds its 128 letters at seven per tick
+  (ticks 128–145, every N slot stalls), then spends ticks 146–163 in the pop cascade that ends the build, where every N slot
+  stalls again, and the FIFO reversals and mismatches of the match phase stall it once more.
+- **Almost every young step stores a cell.** Over 3,283 words ≤ 400, 29.8 % of the young steps store a new cell, 8.7 % act
+  without one, 61.5 % idle: 77 % of the working steps allocate, and in half of the ticks with any, all 11 young steps store a
+  cell. The gap matcher's structures are persistent: a build makes an entry, a rear cell and a list or K node; a pop that
+  unfolds a gap pushes a K node; a reversal rebuilds a list cell by cell; a FIFO reversal makes a queue cell. Only `popL`,
+  `takePop` and the fast matches are free. The old role idles 92.8 % of its steps, but its bursts after a handover need all
+  four steps.
+
+So with this matcher, 11 young steps that may store a cell are the floor, and the branching of a read with them. A smaller
+fan-out needs a matcher whose pops do not allocate — for example unfolding a gap through cursors into the entries instead of
+new list and K nodes — which is a redesign of `GapKmp`, not taken here.
+
+Other angles, measured:
+
+- **W₀ 64** (the fallback in `S` shrinks from 24,610 to 7,375 nodes; compact 3,474 rules, 125,760 nodes): 997 rules at 330,035
+  nodes (×2.63), 5.7 % below §3f, and it passes every length ≤ 1,025. But a random palindrome of length 104 (seed 7) finds bank
+  A of h 64 late at n 104, with or without `endonce`; β 27/64 needs W₀ ≥ 128. Not adopted.
+- **Young 10 with every merge** (`merge2` and `merge3`) passes every length ≤ 1,025 at β 27/64 (it fails at 13/32, and with
+  `merge2` alone), but its grammar is larger: 1,108 rules at 397,451 nodes at ×2.4 (compact 3,823 rules, 165,620 nodes).
+- **The naming rounds** (`peg-cse-improve` with k 30–240, thresholds 300–3,000, 20 rounds) end at the same 996 rules at
+  about 349,800 nodes.
+
+The three machines' counterexamples (104, 180 and 211 letters) are in `src/test/resources/anchors-counterexamples.txt`;
+every chosen machine answers them. The current best stays §3f.
+
+Reproduce (from `research/`):
+
+```sh
+sbt "run pool-grid 128 3 3 3 0 3 11 beta=13/32 every=1025 r13/4:noacc,fuse,compact,endent,endonce,unfold,tmp,lgap,merge2,noG,noR,ypat=ANANANANANAN"
+sbt "run cap-trace 13 128 b1a178b noacc fuse compact endent endonce unfold tmp lgap merge2 noG noR beta=13/32 ypat=ANANANANANAN"
+sbt "run young-alloc 11 128 400 noacc fuse compact endent endonce unfold tmp lgap merge2 noG noR beta=13/32"   # add old for the old role
+```
+
+## 3h. Pops that store no cell (2026-09-27)
+
+§3g ended on the need for pops that store no cell. Where the young role's busy steps go (`step-bigrams 11 4 128 every 300 …`,
+2,075 words, measured):
+
+| kind | share of busy steps | stores a cell |
+|---|---:|---|
+| builds (fast1–4, misZ, misL, mis, same-pop) | 33.4 % | yes (entry, rear cell, list or K node, replay cell) |
+| pops: `rev` 15.5, `popG` 11.5, `takeRev1` 2.1, `popR` 1.8, `takeRev` 1.1, splices 2.4 | 34.4 % | yes |
+| FIFO reversal | 7.0 % | yes (queue cell) |
+| match mismatches outside `misZ` | 1.0 % | yes (K node) |
+| fast matches, `rev-last`, `misZ`, same-pop, `popL`, `takePop`, `takeEmpty` | 24.2 % | no |
+
+**The prize, measured with a what-if machine.** With `freepops` (`GapKmp.Core(stallPops = false)`) an N slot keeps the list and
+K node sites and acts on every pop, stalling only on builds, the end, the FIFO reversal and mismatches — the rates a matcher with
+free pops would reach with the same steps (`CapSuite` checks this stall rule). Every length ≤ 1,025 (seed 5):
+
+| machine | allocating slots after IN | result |
+|---|---|---|
+| 11/4 | 4–9 of 10 | false at n 180–362 |
+| 12/4 | 5, 7 of 11 / 8 of 11 | false at n 180, 360 / pass |
+| 13/4 | 5 of 12 / 7, 8 of 12 | false at n 180 / pass |
+
+On `b a^178 b` the pop cascade after the build now runs at full width and 13/4 answers at 180. By the arm model of §3g, 13/4
+with 7 allocating slots would have about 85 % of today's arms and 12/4 with 8 about 89 % (estimates): the builds, the FIFO and
+the mismatches still need 8 allocating young layers of 13.
+
+**Why pops must store cells here.** A cell points only to cells born before it, and a role has a bounded set of registers.
+
+- The rear of the live sequence is a run of entries in build order, consumed oldest first. After an entry is consumed the next
+  one is newer, and nothing older points to it: a step either makes a cell (the reversal builds the run front first, one cell
+  per entry) or walks back from a newer anchor, which is quadratic and breaks the real-time rates.
+- A gap is built with its entry, before any context that unfolds it, and gaps nest (94 % of `popG` meet another GNODE at the
+  head of the gap). Each nested unfold needs its continuation after the gap, and the link from one continuation to the next can
+  only live in a cell made at the unfold (a frame), or be re-walked.
+
+So pops that store no cell do not exist for this representation, and even free pops would buy about 15 % of the arms. A further
+cut of the young role's branching needs a matcher that only walks toward older data during matching — KMP-style advances
+through per-position data go the other way; none was found. The current best stays §3f.
+
+## 3i. Searching for a matcher that only walks toward older data (2026-09-27)
+
+§3h ended on the need for a matcher that, while matching, only moves to older data. The search, with what came out:
+
+**The model's law.** In a PEG every dependency runs from a newer position to an older one: a tick can read anything older in O(1)
+through a pointer, and can reach newer data only through a cell it makes now. So a "forward step" (to newer data) costs one new
+cell; the question is whether matching can avoid forward steps.
+
+**Candidates, and where each needs a forward step:**
+
+| matcher | older-only part | the forward step |
+|---|---|---|
+| KMP over the reversed prefix (today) | advancing in the pattern is walking the input backward | a failure jump goes to a newer pattern letter; in entry order, advancing goes to a newer entry |
+| palindromic tree (eertree) | suffix links and the letter before a linked suffix (`X[len(link X)]`, stored with the node) | after the palindromic suffix shrinks, its start lies inside the old one: "len letters back from now" is a newer position |
+| online Manacher | the mirror centre and its radius are older | the same: after a switch, the left end moves right (newer) |
+| fingerprints (Karp–Rabin) | O(1) per letter, older only | not exact; the grammar must be |
+
+The common cause: checking an alignment walks text and pattern in the same direction; the text is free only as the letter
+arriving now, the pattern only as the input walked backward, and a mismatch leaves overlapping candidates whose verification needs
+a re-read or a jump the other way. Palindromes are mirror-symmetric, and a mirror maps older positions to newer ones. So a matcher
+that never steps forward was not found, and the argument says it cannot handle the overlapping candidates without one.
+
+**What the search changes: sites, not steps.** A forward step is a cell, and a cell costs little if it is born at a fixed site: the
+branching of a read is the number of sites a pointer may point to, and k cells of one kind born in one tick force k. For the
+anchor scheme the floor is then the entries a tick must make: a bank builds h letters within its young window of about β h ticks,
+so a perfectly pipelined young role makes about 1/β ≈ 2.5 entries a tick (estimate), against 11 layers that may make one today.
+Getting there needs the build and the match interleaved at a steady rate instead of a build burst followed by a pop cascade, and
+each kind of cell born at few layers (§3g's fixed allocating layers, per kind). The rates of §3g–§3h say the present gap matcher
+cannot do it (its pops allocate); a design that can is open.
+
+**Literature.** The known real-time palindrome recognizers are much larger machines: Galil's multitape Turing machine (JCSS 1978,
+after the STOC 1976 real-time string matching), Slisenko's recognizer (41 tapes, 20 after Seiferas–Galil's multihead simulation).
+The papers themselves were not reachable here (publisher 403).
+
+## 3j. Few sites per kind: where the headroom really is (2026-09-28)
+
+§3i put the target in sites: k cells of one kind born in one tick force k arms. Before designing for it, two measurements.
+
+**Which kinds the arms read** (the §3f compact grammar, arms by the kind of the cell read, measured): K nodes 33.1 %, list nodes
+20.4 %, tag tests on list nodes 18.6 %, register leaves (mostly `cur.p1`, entries) 10.0 %, R nodes 9.6 %, entries 6.4 %, queue
+cells 1.9 %. The live sequence (list, K, R and their tag tests) takes about 82 %, the entries about 16 %: a pipelined build that
+made only about 1/β ≈ 2.5 entries a tick would reach at most the 16 %.
+
+**How bursty each kind is** (`kind-profile 11 128 400 …`: the young role's new cells by kind, per tick with young work; 3,283
+words, 271,117 ticks; measured):
+
+| kind | mean per tick | p95 | max | longest run of consecutive steps making it (p99 / max) |
+|---|---:|---:|---:|---:|
+| list | 5.63 | 11 | 11 | 172 / 508 |
+| K | 1.81 | 11 | 11 | 60 / 254 |
+| R | 1.91 | 9 | 11 | 34 / 255 |
+| entry | 2.98 | 11 | 11 | 128 / 360 |
+| queue | 3.40 | 12 | 12 | 60 / 208 |
+
+In 84.2 % of the ticks with young work all 11 young steps are busy. By the phase a step starts in, most list and K cells come from
+the build's pops and most entries, rear cells and queue cells from the build itself.
+
+**The headroom, and why it is not reachable here.** If every kind's sites fell to its mean (list 6, K 2, R 2, entries 3, queue 4),
+the arms would be about 34 % of today's (estimate) — the user's "about four times" is there in principle. But at the 95th
+percentile every kind already needs all eleven steps, and the runs are long: a single cascade makes list nodes in up to 508
+consecutive steps (about 46 ticks), the build makes entries in up to 360. The young windows are full (84 % saturated ticks), so a
+restriction of any kind below the layer count delays these runs past the first answer — the gate of this step; no restriction was
+tried beyond §3g–§3h, which already fail. Spreading the cells needs a matcher with bounded runs: a pipelined, de-amortised young
+role in which a letter's build and match take a bounded number of steps of each kind. The table above is what it would have to
+absorb; no such design yet. The current best stays §3f.
+
+## 3k. Towards a de-amortised, pipelined young role (2026-09-28)
+
+§3j measured what such a young role would have to absorb. This step asks what it would take, and measures the first condition.
+
+**What exists in principle.** The KMP automaton can be built in O(1) per pattern letter by running it on the pattern itself:
+f(k+1) = δ(f(k), P[k]), and the mismatch transition of state k follows from that of f(k); matching is one transition per text
+letter. So build and match need no amortisation. In this model, though, a "next" transition goes to a newer entry, so the forward
+sequence of entries has to be materialised as cells; the sequences needed are a stored range, one entry and the current sequence
+concatenated, which purely functional real-time catenable deques (Kaplan–Tarjan) support in O(1) worst case per operation — with
+constants of several cells per operation.
+
+**Two couplings in today's machine** (not changed here): (1) a bank's text starts at t0 = n0 − h, before its birth, and is rebuilt
+forward by prepending during the first (1 − β)h build steps, so matching cannot start before them; queuing each pending bank's text
+at IN as its letters arrive (the rear of such a queue is the input chain itself) would make it ready at birth and move the FIFO
+reversal (7.0 % of the young's busy steps) out of the young role; (2) build then match.
+
+**The first condition, measured** (`life-work 11 128 400 …`: per life of the young role, a birth to the next — 3,002 lives of
+65.8 ticks on average, 104 at most; per tick of a life, mean / p95 / max):
+
+| | build side | match side | both |
+|---|---|---|---|
+| busy steps | 4.45 / 4.91 / 6.48 | 4.62 / 6.69 / 7.30 | 9.07 / 10.93 / 11.00 |
+| entries | 2.44 / 2.48 / 2.48 | 0.01 | |
+| rear cells | 1.58 / 2.44 / 2.45 | 0 | |
+| list nodes | 3.85 / 4.87 / 5.33 | 1.21 / 3.13 / 3.96 | |
+| K nodes | 1.22 / 2.42 / 2.44 | 0.43 / 1.55 / 2.44 | |
+| queue cells | 1.83 / 1.92 / 2.05 | 1.19 / 1.58 / 1.63 | |
+
+The entries are 2.44 a tick, as the §3i estimate 1/β ≈ 2.46 said. But a pipelined young role with its own builder and matcher
+slots needs at least the busiest life's rate on each side: about 7 builder slots (6.48 steps a tick) and 8 matcher slots (7.30) —
+15 in all, against the 11 the shared young role uses today, because its two sides peak at different times of a life and share the
+same slots. Separating them costs layers, and list and K nodes would still come from both sides. **Gate 1 fails**: pipelining pays
+only if the work itself gets cheaper — the builder near one step per entry (today 1.8 on average, 2.6 in the busiest life) and the
+matcher near one step per letter, deque operations included. The DFA construction gives one transition per letter; whether the
+forward sequences can be kept for well under one extra step per transition is the open question. Phase 2 of the plan (the queued
+text) is a separate, smaller lever: it would take the FIFO reversal out of the young role; not built.
+
+**The target this leaves, as a number.** The young role's arms go roughly as L × r × L: L layers, r reads in a layer, and each read
+branching over about L sites — r L². Today L = 11. A de-amortised role that handles one letter per step, a fat step doing a whole
+DFA transition and its deque upkeep, would need about 2.5 + 2.5 ≈ 5 layers; it pays if its reads per layer stay below about
+(11 / 5)² ≈ 4.8 times today's (estimate). The merges of §3e made steps fatter to save one layer and lost; halving L is a different
+regime. That is the next design question.
+
+## 3l. The de-amortised young role, built and measured (2026-09-28)
+
+§3k left one question: can the forward sequences be kept for well under one extra step per transition? This step builds the
+matcher that answers it.
+
+**The design** (`RtSteque`, `RtKmp`; reference models in plain Scala, not compiled to a PEG). The builder runs the KMP automaton
+on the pattern itself; a builder letter stores entry k with its gap G(k) = [other(k) .. k−1], which is either the builder's
+sequence B (when P[f(k)] ≠ P[k]) or G(f(k)) ++ [f(k)] ++ B, then E_k joins the open sequences and the builder advances (pop) or
+jumps (catenate, pop). A matcher letter is one transition: a pop, or G(j) ++ [j] ++ M then a pop. The sequences are Kaplan and
+Tarjan's real-time catenable steques (JACM 46(5), 1999, §5): prefix, child steque of pairs, suffix; buffers that are stacks
+over Hood–Melville real-time queues; red/yellow/green prefixes with the regularity invariant; and the stack-of-substacks pointers
+(`yc`, `nny`), so a pop repairs the nearest red descendant with O(1) new cells. Every operation touches a bounded number of
+cells; no step waits for a cascade. A builder letter makes at most 5 steque operations, a matcher letter at most 3.
+
+**Checks** (tests): 20 random persistent histories × 2,000 operations agree with lists and keep the invariants
+(`RtStequeSuite`); 400 random pattern/text pairs, built first and pipelined, and periodic and Fibonacci families agree with the
+naive longest-prefix states (`RtKmpSuite`); the most cells a letter stores is the same for patterns of length 64 and 2,048.
+On the banks of the families (`rt-kmp 128 400 3 3 beta=13/32`: 3,283 words, 3,002 banks; the young window builds and matches
+three letters of each kind a tick) there are no wrong answers and no late young windows; up to length 1,000 (21,267 banks) the
+same, with the per-letter maxima unchanged.
+
+**What one letter costs** (cells stored, mean / p95 / max; length ≤ 400, measured; the queue column adds the two kinds'
+figures, so its p95 and max are upper bounds):
+
+| | buffer records | list cells | queue records + rotation states | steque nodes | pairs | entries | total |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| builder letter | 5.7 / 10 / 15 | 7.8 / 13 / 27 | 7.6 / 13 / 22 | 5.3 / 7 / 9 | 0.5 / 1 / 2 | 1 | 27.9 / 41 / 68 |
+| matcher letter | 1.3 / 2 / 9 | 0.7 / 4 / 8 | 1.5 / 4 / 14 | 1.1 / 2 / 7 | 0.01 / 0 / 2 | 0 | 4.6 / 10 / 39 |
+| young tick (3 + 3 letters) | 16.6 / 30 / 49 | 20.0 / 39 / 77 | 22.1 / 38 / 64 | 15.0 / 23 / 32 | 1.2 / 4 / 8 | 2.4 / 3 / 3 | 77.2 / 123 / 199 |
+| old tick | 1.5 / 2 / 9 | 0.8 / 4 / 8 | 1.0 / 4 / 14 | 1.0 / 2 / 7 | 0.01 / 0 / 2 | 0 | 4.3 / 10 / 39 |
+
+**The answer is no.** Today's young role stores about 16 cells a busy tick (§3j: list 5.6, K 1.8, R 1.9, entries 3.0, queue
+3.4) and at most 11 of a kind (one per layer). The de-amortised role stores 77 a tick on average and up to 199, and up to 77 of
+one kind: about five times the cells, and three to seven times the sites per kind that a fixed schedule would need (a layer
+stores at most one cell per tag, so a kind needs at least its per-tick maximum of sites). The fat step of §3k is out of reach:
+one builder letter alone stores up to 68 cells. Most of the cost is the builder (two injects a letter, into its own sequence
+and the matcher's, each a real-time queue step with its rotation) and the steque's bookkeeping; a leaner buffer could shave a
+constant, not the factor. The young role's bursts are gone, but only by paying the worst case every time.
+
+**Why this is the price of a table.** A matcher that keeps per-position data (KMP's entries) must move forward through
+entries created in index order; with cells that only point to older cells, "next" is never a pointer, so the forward order has
+to be kept as sequences, and a jump back to other(j) prepends a stored range: catenation. Without amortisation that is exactly a
+real-time catenable steque, whose constants are the ones above. (A static representation cannot help: the automaton has cycles,
+so any fixed set of cells loses the forward handle after a jump; see NOTES §21.)
+
+**What is left: a matcher without a table.** The pattern is the reversed prefix, so reading it forward is walking the input
+chain (free, and input cells have a single site); the text arrives in order and is read backward from the input chain as well.
+A constant-space matcher needs neither entries nor sequences: Crochemore and Perrin's two-way algorithm, made real time by
+Breslauer, Grossi and Mignosi (CPM 2011), whose right scan never moves back in the text and whose resets go to fixed pattern
+positions (markers realisable as input-chain countdowns). Two obstacles, both open here: (1) the preprocessing (maximal suffixes
+under both orders) needs position arithmetic that the machine lacks (there is no pointer equality); a counter chain of one cell
+per step does it, at one site per step; (2) real time needs the left part checked in time, which fails when the left part is
+longer than the right one (a^(h−1)b); the simple fix of recursing on the left part is unbounded (depth 3, 4, 5 at lengths 10,
+14, 18, all binary words, measured), and Breslauer–Grossi–Mignosi's two-instance construction is needed — its exact prefix
+condition could not be recovered here (the paper was not reachable, and the paraphrase "a prefix longer than u whose critical
+factorization is in its first half" does not exist for a^(h−1)b). That is the next research question.
+
+## 3m. A matcher without a table: fixed work a letter, found (2026-09-28)
+
+§3l ended on the matcher without per-position data. This step builds it (`TwoWay`, a reference model) and it meets the §3j
+specification: the young role's cells come in three kinds at fixed rates, the text costs a fixed number of comparisons and no
+cell, and nothing is amortised.
+
+**The matcher.** Crochemore and Perrin's two-way matcher in Breslauer, Grossi and Mignosi's real-time "simple version" (CPM 2011;
+the construction was recovered from the authors' slides). For a critical factorization X = u·w with |u| < π(X), a candidate s is
+scanned forward on w, one comparison a letter; a mismatch after z matched letters takes the candidate whose scan starts at the next
+letter, a full scan shifts by the period (keeping what is known) or, when the local period overflows, by |w| + 1; u is checked
+backward in parallel, one comparison a letter. When |u| > |w| the backward check cannot finish, and a second instance finds, in
+real time, the occurrences of a prefix X' ⊇ u critically factorized in its first half; the first instance then scans w only, and
+X occurs where both agree. The two are coupled by fixed countdowns: the second instance reports an occurrence of X' at start s
+exactly when the first one's candidate is s and a fixed number of letters (by how that candidate was taken) has passed (checked
+equal to comparing the starts on every binary pattern up to length 13).
+
+**In the machine's terms.** The pattern (the reversed prefix) is read forward along the input chain; backward along a list N built
+once (one cell a pattern letter); the text as it arrives and backward along the input chain. Every reset goes to a fixed pattern
+cell, every length test is a countdown that walks the input chain to its end, so the matcher needs no pointer equality and stores
+no cell: at most 3 comparisons a text letter, in the young and the old role alike.
+
+**The preprocessing, linear.** One maximal-suffix pass per order yields the maximal suffix (start and period) of every prefix
+(checked on every prefix of every binary word up to length 14); a list R records each prefix's critical factorization (one cell a
+pattern letter). The second instance's pattern comes from a chain of factorizations: while A's left part u1 is the longer, take
+the critical factorization u·v of u1 from R; when u is longer than vw, (u, vw) is critical for X with the local period overflowing
+both sides (the local period is at least |u| > |vw|, so it is a period of X) and A moves to it with no search; otherwise one search
+for u in vw decides — no occurrence: A moves to it and it is the single case; an occurrence at q: X' = X[0 .. max(|u1|, |u| + μ)]
+with μ = |u| + q, critically factorized at |u| with |u| ≤ |X'| − |u| (checked on every binary word up to length 18 by brute
+force). The chain follows R's pointers, so it costs O(1) a step; one search at the end: at most 8 steps a pattern letter (a test up
+to length 3,000), 6.08 at most on the banks.
+
+**Measured** (`two-way 128 1000 19 beta=13/32`; 7,554 words, 21,267 banks, 6,898 of them two-instance): no wrong answer, no late
+backward check, no young window late with 19 steps a young tick (18 is not enough). Up to length 400 the same (3,002 banks).
+
+| | today's young role (§3j) | the table-free young role |
+|---|---|---|
+| cells a young tick | 16 on average, 5 kinds, up to 11 of a kind, runs up to 508 steps | 6.19 on average, 6.35 at most: N and R one a pattern letter, the replay one a replayed letter |
+| a text letter | a pop or a cascade | at most 3 comparisons, no cell |
+| a pattern letter | an entry and its pops | one N cell, one R cell, 5.2 comparison and walk steps on average (6.1 at most) |
+| steps a young tick | 11 | 19 |
+| old role | 4 steps a tick, pops | at most 3 comparisons a tick, no cell |
+
+**What it would cost in the grammar (estimate, not compiled).** The young arms of today's machine go as r·L² because a read fans
+out over the ~11 layers that store its kind. Here almost every read is of an input cell (one site a tick) or of N and R cells
+(three kinds at fixed rates, so few sites), so the arms go about as r'·L' with L' = 19: the table-free role pays if its reads a
+layer stay under about 121/19 ≈ 6.4 times today's. The next step is to write it as an Lpm core (young: N, the two passes, R, the
+chain, the search, then the two instances; old: the two instances) and compile it.
+
+## 3n. Writing the table-free matcher in the machine's terms: what is solved, what is not (2026-09-28)
+
+Before writing §3m as an Lpm core, the parts that the reference model does with integers were checked against what the machine
+has: pointers to input cells, pointers to cells it stores, null tests, tag and letter tests — no comparison of two positions.
+
+**Solved.**
+- Reads of input cells are cheap in the grammar: `Fld(x, 1)` on an input pointer compiles to a constant expression (one character
+  back), with no dispatch over sites (`LpsCode`, the `KInp` case). So a matcher whose reads are almost all input cells escapes the
+  r·L² growth, as §3m assumed.
+- The matching phase needs no position comparison: resets go to fixed cells, lengths are countdowns walking the input chain to its
+  end, the backward check walks N to its end, and the two instances are coupled by fixed countdowns (§3m).
+- The block counter of the maximal-suffix loop (k = p) is a countdown of length p; a pointer D that walks N one node per scanned
+  letter gives its start (the pattern cell at distance p from the end) at every "<" event. N must be complete before the loop starts
+  (its head, the input's first letter, is built last).
+- Recording every prefix's maximal suffix needs to know when the scan passes its farthest position so far. In Crochemore–Perrin's
+  loop every restart (">") happens at that frontier, never inside a rescan (all binary words up to length 16, both orders: 366,956
+  restarts, all at the frontier; measured), so one countdown set at each restart tells when the rescan is over.
+
+**Not solved.**
+- Crochemore–Perrin's critical position is the later of the two maximal suffixes (one per order): a comparison of two positions.
+  The machine can only race two pointers to the end (O(n) steps). Recording every prefix's critical factorization needs one such
+  comparison a prefix; the chain of §3m needs one a step (and whether the left part is the longer is another).
+- A counter-free variant of the maximal-suffix loop (a lag running at a fixed distance, restarting just after it) is correct but
+  quadratic: (ab)^m bbaa takes about m/2 steps a letter under one order (measured up to m = 192).
+- Rerunning the loop on each prefix of the chain avoids the records but costs one pass a step, and the chain grows with the length
+  (up to 6 steps at length 1,000), so the young budget would not be a constant.
+
+**The later maximal suffix is the one that changed last** (found after the above; measured, not proved). Run the two passes with
+their frontiers in lockstep: at every prefix, the maximal suffix that starts later is the one whose start changed most recently —
+all 1,703,974 prefixes of all binary words up to length 16, and 385,406 prefixes of 448 long words (Fibonacci, Thue–Morse,
+periodic-with-noise and random, lengths 100–2,000), no exception. So Crochemore–Perrin's critical position needs no comparison: a
+bit set at each restart says which pass holds it. The distances from the two starts to the frontier grow in lockstep between
+restarts, so the order can only change at a restart; the rule says it always changes in favour of the pass that restarted.
+
+**What is still open.** The chain of §3m reads the critical factorization of earlier prefixes, and the search reads the period of
+u's maximal suffix. Both are lookups by position into the per-prefix record: its nodes are created in position order and can only
+be walked back, while the passes set block starts (and so the future starts) inside rescans, where the record's nodes already exist
+but are not in hand. With that lookup the whole preprocessing is O(1) a step (the midpoint, which the chain compares against, can be
+a tag on the record, set by a countdown from the midpoint cell that a double-speed walk finds once); without it, the chain reruns
+the loop on each prefix, which grows with the length.
 
 ## 4. The handoff's other routes, re-evaluated with these numbers
 

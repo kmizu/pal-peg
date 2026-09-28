@@ -206,6 +206,9 @@ object Lpm {
     case C.First => ctx.first
   }
 
+  /** a condition over a state's registers and bits only (no input cell, no fresh cells): for profiling branch guards */
+  def holds(c: C, st: State): Boolean = evalC(c, Ctx(st, null, null, Vector(), false))
+
   /** One unit of `step` over the registers `regs` and bits `bits`. */
   def unitStep(step: Step, regs: Vector[String], bits: Vector[String], st: State, in: RCell, sep: RCell, first: Boolean, layer: Int, tick: Int = -1): State = {
     // the sites are created in order; a site's fields may refer to the earlier sites of the same unit

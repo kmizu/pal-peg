@@ -40,3 +40,87 @@ Compact 3,739 rules, 152,266 rhs nodes, 28 colours; greedy 999 rules at 591,546 
 | 0.05 | 1,404 | 1,215 | 1,110 | 887,968 |
 | 0.2 | 1,580 | 1,371 | 1,186 | 1,014,965 |
 | 0.5 | 1,737 | 1,478 | 1,316 | 1,296,427 |
+
+## §3e (2026-09-27): the seven ideas, measured
+
+999 rules reached at (greedy `lps-inline-curve`, β 7/16, W₀ 128, A + unfold + `tmp` unless stated):
+
+| machine | rhs nodes at 999 |
+|---|---:|
+| young 12 / old 4 | 528,756 |
+| young 11 / old 4 (rates fail) | 398,492 |
+| young 10 / old 4 (rates fail) | 301,314 |
+| 12/4 + `pairs` | 952,966 |
+| 12/4 + `recolour` | 528,984 |
+| 11/4 + `lgap` + R1 + U (passes the seed-21 set) | 520,517 |
+| 11/4 + `lgap` + all of `merge2` | 865,767 |
+| 11/4 + `lgap` + `merge2` + `merge3` | 1.49 M |
+| **11/4 + `lgap` + U, β 13/32** | **458,189** |
+
+The adopted grammar (11/4 + `lgap` + U, β 13/32, W₀ 128, mirrored fallback) with `peg-cse-improve`:
+
+| budget | rules | rhs nodes | bytes |
+|---|---:|---:|---:|
+| ×2 | 1,098 | 342,699 | 1,577,434 |
+| ×2.4 | 1,019 | 411,109 | 1,816,505 |
+| ×2.5 | 1,003 | 428,030 | 1,877,649 |
+| **×2.56** | **994** | **438,487** | **1,905,775** |
+| ×3 | 951 | 512,816 | 2,183,116 |
+
+## §3f (2026-09-27): the branching of one read, measured
+
+The §3e machine; `peg-cse-improve C.peg <x> 65536 60 1000 10`:
+
+| options | compact rules / nodes / colours | x | rules | rhs nodes | bytes |
+|---|---|---:|---:|---:|---:|
+| none (§3e) | 3,529 / 171,517 / 26 | 2.56 | 994 | 438,487 | 1,905,775 |
+| `sound` | 3,529 / 161,077 / 26 | 2.56 | 1,004 | 411,152 | 1,811,114 |
+| `sound` | | 2.65 | 987 | 426,202 | 1,849,149 |
+| `pts` | 3,521 / 153,047 / 22 | 2.45 | 992 | 373,810 | 1,619,754 |
+| `pts` | | 2.56 | 975 | 391,673 | 1,697,712 |
+| `sound pts` | 3,521 / 143,051 / 22 | 2.2 | 1,044 | 314,246 | 1,403,402 |
+| `sound pts` | | 2.35 | 1,018 | 336,165 | 1,504,548 |
+| **`sound pts`** | | **2.45** | **996** | **349,849** | **1,542,201** |
+| `sound pts` | | 2.56 | 984 | 365,203 | 1,582,784 |
+| `sound pts` | | 2.8 | 949 | 399,416 | 1,730,216 |
+| `sound pts` | | 3.0 | 933 | 428,580 | 1,856,960 |
+
+## §3g (2026-09-27): capping the cells of a tick, measured
+
+Grammars of the configurations that were measured (`peg-cse-improve <x> 65536 60 1000 10`, sound pts); none replaced §3f:
+
+| machine | compact rules / nodes / colours | x | rules | rhs nodes | bytes | rates |
+|---|---|---:|---:|---:|---:|---|
+| §3f (11/4 `lgap` U, β 13/32, W₀ 128) | 3,521 / 143,051 / 22 | 2.45 | 996 | 349,849 | 1,542,201 | pass |
+| same at W₀ 64 | 3,474 / 125,760 / 22 | 2.63 | 997 | 330,035 | 1,502,265 | false at n 104 (seed 7) |
+| same at W₀ 64 | | 2.7 | 990 | 338,974 | 1,521,178 | |
+| 10/4 `lgap` `merge2` `merge3`, β 27/64 | 3,823 / 165,620 / 20 | 2.4 | 1,108 | 397,451 | 1,697,593 | every ≤ 1,025 pass |
+
+Allocation (`young-alloc 11 128 400 …`, 3,283 words): young steps 29.8 % storing a cell, 8.7 % acting without one, 61.5 %
+idle; ticks with any storing step: 11 of 11 in 50.2 %, 10 in 17.2 %. Old role: 1.9 % / 5.3 % / 92.8 %.
+
+## §3h (2026-09-27): the free-pops what-if, measured
+
+`pool-grid 128 3 3 3 0 3 2 beta=13/32 every=1025 r<ky>/4:<§3e flags>,freepops,ypat=<P>` (seed 5):
+
+| machine | pattern after IN | result |
+|---|---|---|
+| 11/4 | NANANNANAN, ANANANANAN, ANANAANANA, ANAAANAANA, AANAAAANAA, AAAAANAAAA | false at n 180, 180, 180, 180, 187, 362 |
+| 12/4 | NANANANANAN, ANAANANAANA / ANAAANAAANA | false at n 180, 360 / pass (7,158 words) |
+| 13/4 | NANANANNANAN / ANANAANANANA, ANAANAANAANA | false at n 180 / pass, pass |
+
+## §3j (2026-09-28): arms by kind and the burst profile
+
+Arms of the §3f compact grammar by the kind of cell read: K 33.1 %, list 20.4 %, tag tests 18.6 %, register leaves 10.0 %, R 9.6 %,
+entry 6.4 %, queue 1.9 %.
+
+`kind-profile 11 128 400 noacc fuse compact endent endonce unfold tmp lgap merge2 noG noR beta=13/32` (3,283 words, 271,117 ticks
+with young work): per tick list 5.63 / p95 11 / max 11, K 1.81 / 11 / 11, R 1.91 / 9 / 11, entry 2.98 / 11 / 11, queue 3.40 / 12 / 12;
+longest runs (p99 / max) list 172 / 508, K 60 / 254, R 34 / 255, entry 128 / 360, queue 60 / 208; busy width 11 in 84.2 % of the ticks.
+
+## §3k (2026-09-28): the work of each side of the young role, per life
+
+`life-work 11 128 400 noacc fuse compact endent endonce unfold tmp lgap merge2 noG noR beta=13/32` (3,002 lives; mean / p95 / max per
+tick of a life): busy steps build 4.45 / 4.91 / 6.48, match 4.62 / 6.69 / 7.30, both 9.07 / 10.93 / 11.00; entries (build) 2.44 /
+2.48 / 2.48; rear cells 1.58 / 2.44 / 2.45; list nodes build 3.85 / 4.87 / 5.33, match 1.21 / 3.13 / 3.96; K nodes build 1.22 / 2.42 /
+2.44, match 0.43 / 1.55 / 2.44; queue cells build 1.83 / 1.92 / 2.05, match 1.19 / 1.58 / 1.63.

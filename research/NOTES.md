@@ -272,3 +272,123 @@ grammar goes below 1,000 rules at ×2.7 (472,260 nodes, 2.03 MB), inside the ban
 threshold from the greedy run (the price of the next elimination) named too little and ended no lower: a naming also cheapens
 the later elimination of the rules around it. Old 3 passes only with young 13 at W₀ 256, which costs more than it saves; young 12
 with old 3 fails at the first B life whatever W₀.
+
+## 14. Seven ideas for a dramatic cut (2026-09-27, `STRATEGY.md` §3e)
+
+A young layer is worth about a quarter of the nodes at 999 rules, so the ideas aimed at fewer layers or cheaper layers. Two steps
+per slot copied the first step's register expressions into the second (worse); colours by use and a larger RHS cap changed
+nothing. Classifying the young steps showed reversal chains and the unfolding of GNODEs whose gap is empty; an entry with an empty
+gap now gets an LNODE (`lgap`, free). Merging a pop with the pop that always follows it saves a layer but adds nested reads, and a
+read costs a dispatch over every site its pointer may reach, so the merges cost about what the layer is worth. With balanced
+anchors (β 13/32) young 11 needs only the cheapest merge: 994 rules at 438,487 nodes (×2.56), 1.91 MB, about 7 % below §3d.
+Not dramatic: the per-layer cost of branching, not the number of steps, is the limit now. A literal `False` guard used to be
+compiled into rules; options now add branches only when they are on.
+
+## 15. The branching of one read (2026-09-27, `STRATEGY.md` §3f)
+
+Half of the compact grammar is dispatch arms, so the arms were counted by what they do. Two kinds were waste the compiler
+itself made: a tag test inside every field read of a two-tag site, `&(!g0 / g0)`, always true but keeping the tag-bit rules
+and their guards alive; and arms from young reads to the old role's sites, because domains came from tags although a young
+register, reset at every birth, never holds an old cell. `sound` drops the first (the colour picks a site of the pointer's
+domain and kinds are checked after every slot), points-to domains (`PointsTo`, an Andersen-style fixpoint) the second. The
+machine does not change, so the rates stand: 996 rules at 349,849 nodes (×2.45), 1.54 MB, 20 % below §3e. What remains is one
+arm per young layer, and it is inherent: `alloc-profile` finds ticks in which every site of a tag keeps a cell, so no
+re-addressing of the cells branches less; only a machine that caps the cells kept per tick could.
+
+## 16. Capping the cells of a tick (2026-09-27, `STRATEGY.md` §3g)
+
+Capping the cells a tick may keep was the structural step §3f pointed at. Naming cells by their rank within the tick costs a
+bus per (rank, site, field) that eats what the reads save; fixing which young layers may allocate needs no bus and was built
+(`noAlloc`, `ypat=`), with a test that an N layer stalls exactly where the full step would store a cell. Every pattern fails
+the first answer: the gap matcher allocates in 77 % of its working steps — builds, the unfolds and reversals of its pops, the
+FIFO — because its structures are persistent, so eleven allocating young steps are the floor. W₀ 64 would save 5.7 % but is
+late on a 104-letter palindrome; young 10 with every merge passes but is larger. The next real cut needs a matcher whose pops
+do not allocate.
+
+## 17. Pops that store no cell (2026-09-27, `STRATEGY.md` §3h)
+
+A third of the young role's busy steps are builds and a third are pops that store a cell (reversals of the rear, unfold frames).
+A what-if machine whose N slots may run every pop showed the prize first: the cap would then pass with 8 allocating young layers
+of 13, about 15 % of the arms. And the pops cannot be freed in this model: cells point only to older cells and registers are
+bounded, so consuming the build-ordered rear oldest-first needs a cell per entry (or quadratic re-walks), and nested unfolds need
+a frame per level. The young role's branching is bound by the matcher's representation; §3f stays the best.
+
+## 18. A matcher that only walks toward older data (2026-09-27, `STRATEGY.md` §3i)
+
+Searched: KMP, the palindromic tree, online Manacher and fingerprints each need a step to newer data (a failure jump, the start of a
+shrunken palindromic suffix, a moved left end) or are inexact. The reason is shared: verifying an alignment walks text and pattern
+the same way, and overlapping candidates need a re-read or a jump back; a mirror maps older positions to newer ones. What the search
+changed is the target: steps to newer data cost cells, and cells are cheap when born at fixed sites; the branching of a read is the
+number of sites. For anchors the floor is about 1/β ≈ 2.5 entries a tick if the build and the match were pipelined, against 11
+allocating layers now. No such design yet.
+
+## 19. Where the headroom of sites really is (2026-09-28, `STRATEGY.md` §3j)
+
+Measured before designing: 82 % of the arms read the live sequence (list, K, R nodes and tag tests), 16 % entries. Per tick the
+young role makes on average 5.6 list, 1.8 K, 1.9 R, 3.0 entry and 3.4 queue cells, so sites at the means would leave about a third
+of the arms; but every kind hits all eleven steps at the 95th percentile, cascades run up to 508 consecutive list-making steps, and
+84 % of busy ticks are saturated. The headroom needs a matcher whose runs are bounded — a pipelined, de-amortised young role —
+which does not exist yet; the burst table is its specification.
+
+## 20. Towards a de-amortised young role (2026-09-28, `STRATEGY.md` §3k)
+
+A de-amortised young role exists in principle: the KMP automaton built by running it on the pattern (one transition per letter)
+plus real-time catenable deques for the forward sequences of entries. The first condition was measured per young life: entries are
+2.44 a tick, as 1/β predicted, but the build side needs up to 6.48 busy steps a tick and the match side 7.30, so separate builder
+and matcher slots would need about 15 layers against the 11 the shared role uses; the two sides peak at different times and share
+slots today. Pipelining pays only if the work per letter drops to about one step on each side, deque operations included — the
+open question. Queuing each pending bank's text at IN (taking the FIFO reversal out of the young role) is a smaller separate lever.
+The arms go as r L² (layers L, reads per layer r); one fat step per letter would need about 5 young layers, which pays
+if r grows less than about 4.8 times.
+
+## 21. The de-amortised young role, built and measured (2026-09-28, `STRATEGY.md` §3l)
+
+`RtSteque` (Kaplan–Tarjan real-time catenable steques, JACM 1999 §5, with the stack-of-substacks pointers) and `RtKmp` (the
+KMP automaton built on the pattern, one transition per text letter) give a young role without amortisation: at most 5 steque
+operations per builder letter, 3 per matcher letter, and a bounded number of cells for each (68 and 41 at most, unchanged from
+length 64 to 2,048 and on the banks up to length 1,000). It is correct on every bank of the families (3,002 banks to length 400,
+21,267 to 1,000; three builder and three matcher letters a young tick are enough, two are not). It costs about 77 cells a young
+tick (199 at most, up to 77 of one kind) against today's 16 (11 of a kind at most): the bursts are gone because every letter pays
+the worst case. So the forward sequences cannot be kept for well under a step per transition; the table is what costs.
+
+Why a table forces this. With cells that point only to older cells, the per-position data of the automaton (built in index
+order) cannot link forward; a matcher at state j needs j + 1 next and other(j) after a mismatch. A static layout fails on the
+cycles: a list built in reverse gives "next" but not the jump; a list in index order gives the jump but not "next"; carrying a
+handle of each kind loses the other after one move of the other kind, and alternating generations only postpone the loss by one
+jump each. The matcher must carry the forward order itself, and a jump prepends a stored range — catenation.
+
+The way out is a matcher without per-position data (Crochemore–Perrin two-way, real time by Breslauer–Grossi–Mignosi): the
+pattern is read forward along the input chain for free, the text as it arrives. Its preprocessing needs position arithmetic
+(the machine has no pointer equality; a counter chain of one cell per step replaces it), and its real-time form needs the
+two-instance construction for patterns whose left part is the longer one (the plain recursion on the left part grows: depth 3,
+4, 5 at lengths 10, 14, 18). Both are open.
+
+## 22. A matcher without a table (2026-09-28, `STRATEGY.md` §3m)
+
+`TwoWay` is the young role the §3j table asks for. Crochemore–Perrin two-way matching in Breslauer–Grossi–Mignosi's real-time
+form: forward scan of the right part and a parallel backward check of the left part, one comparison a letter each; when the left
+part is the longer, a second instance on a prefix X' (critically factorized in its first half) finds X' in real time, and the two
+are coupled by fixed countdowns. The pattern is read along the input chain (forward) and a list N (backward); resets go to fixed
+cells and lengths are countdowns to the end of the input chain, so matching stores no cell and needs no pointer equality.
+Preprocessing: one maximal-suffix pass per order gives every prefix's maximal suffix; a list R keeps every prefix's critical
+factorization; the chain of factorizations follows R, needing no search while the left part is the longer (then the local period
+overflows both sides and is a period of X), and one search at the end. Measured on 21,267 banks up to length 1,000: correct,
+never late, 19 steps a young tick, 6.2 cells a young tick (N, R, replay: fixed rates), at most 3 comparisons a text letter, at
+most 6.1 preprocessing steps a pattern letter (linear: at most 8, tested to length 3,000). Not compiled yet.
+
+Pitfalls met on the way: the backward check must count lateness only while it still agrees (a failed check stops early); when
+X' = X, the second instance reports on the same letter as the first finishes, so the coupling must look at B's report before A's
+new candidate replaces the flag; the chain of factorizations walked by searching made one search a step (up to 6 at length 1,000)
+and made the preprocessing grow with the length until the chain was read from R.
+
+## 23. The table-free matcher in the machine's terms (2026-09-28, `STRATEGY.md` §3n)
+
+Checked before writing §3m as an Lpm core. Input-cell reads compile to a constant expression (no site dispatch), so §3m's
+assumption holds. Matching needs no position comparison. The maximal-suffix loop's block counter is a countdown whose start a
+pointer walking N supplies (N complete first). Every restart of the loop happens at the scan's frontier, never inside a rescan
+(366,956 restarts over all binary words up to length 16), so a single countdown per restart tracks the frontier. The open part:
+the critical position is the later of two maximal suffixes — a position comparison the machine lacks (a race costs O(n)); both the
+per-prefix record and the chain of §3m need it. A counter-free loop is quadratic ((ab)^m bbaa, about m/2 steps a letter).
+Later the same day: at every prefix, the later maximal suffix is the one whose start changed most recently (all prefixes of all
+binary words up to 16 and of 448 long words; no exception, not proved) — so the critical position needs no comparison. Still open:
+lookups by position into the per-prefix record (for the chain and for the search's period).

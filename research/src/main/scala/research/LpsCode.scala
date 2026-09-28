@@ -30,8 +30,15 @@ object LpsCode {
     * up: no machine cell born before tick `minBirth`, which must be >= the colour count) from that length on.
     * PAL3 with warmup W0: fallbackBelow = 2 W0, minBirth = W0; OverlapPal with minAnchor W0: 3 W0 / 2 and W0. */
   /** `mirrorFallback`: the fallback by mirrored pairs (`SiteCode.fallbackMirror`) instead of the `Pal_k` family */
+  /** `recolour` (STRATEGY.md §3e): after a first compilation, renumber the colours by the number of references to their
+    * `Tail_c` (the most referenced colour gets the shortest code), then compile again */
+  /** `sound` (STRATEGY.md §3f): a field read does not re-test the target's tag (the colour picks a site of the pointer's
+    * domain, and the pointer only holds cells of its kinds, which `Lps.run` checks), and a tag test at a site whose only tag
+    * is the tested one is the colour test alone (the code of a null pointer never matches) */
+  /** `pointsTo` (STRATEGY.md §3f): a read dispatches over the pointer's points-to sites (`PointsTo`) instead of every site of
+    * its tags */
   final case class Options(fallbackBelow: Option[Int] = None, minBirth: Int = 0, dispatch: Dispatch = Direct, codeByStar: Boolean = false,
-                           mirrorFallback: Boolean = false)
+                           mirrorFallback: Boolean = false, recolour: Boolean = false, sound: Boolean = false, pointsTo: Boolean = false)
   final case class Result(grammar: Grammar, meta: Map[String, RuleMeta], coloring: SiteCode.Coloring, domains: Vector[Set[Site]])
 
   final class Compiler(m: Machine, hints: Map[String, Inp], colour: Site => Int, colourCount: Int, opts: Options) {
@@ -44,7 +51,16 @@ object LpsCode {
     private def hint(name: String, kinds: Set[K]): Inp = if (kinds(KInp)) { hints.getOrElse(name, Set.empty) } else { Set.empty }
     private def letterOf(name: String, inp: Inp): Expr = if (inp == BothInp) { Ref(s"${name}_kL") } else if (inp == Set(L)) { TrueE } else { FalseE }
     private def sepOf(name: String, inp: Inp): Expr = if (inp == BothInp) { Not(Ref(s"${name}_kL")) } else if (inp == Set(Sc)) { TrueE } else { FalseE }
-    private def codeOf(name: String, kinds: Set[K]): Expr = if (domain(kinds).nonEmpty) { Ref(s"${name}_c") } else { FalseE }
+    private val pts: Option[PointsTo.Sets] = if (opts.pointsTo) { Some(PointsTo(m)) } else { None }
+    /** the sites of a points-to set, registered as a domain (None without `pointsTo`: the sites of the kinds) */
+    private def ptsSites(s: => Set[Site]): Option[Vector[Site]] = pts.map(_ => s.toVector.sorted)
+    private def regPts(r: String): Option[Vector[Site]] = ptsSites(pts.get.reg(r))
+    private def fieldPts(l: Int, i: Int, f: Int): Option[Vector[Site]] = ptsSites(pts.get.field((l, i), f))
+    private def sitesOf(kinds: Set[K], ss: Option[Vector[Site]]): Vector[Site] = ss match {
+      case Some(v) => if (v.nonEmpty) { domainsB += v.toSet }; v
+      case None => domain(kinds)
+    }
+    private def codeOf(name: String, kinds: Set[K], ss: Option[Vector[Site]]): Expr = if (sitesOf(kinds, ss).nonEmpty) { Ref(s"${name}_c") } else { FalseE }
     private val B = m.budget
     private val rules = Vector.newBuilder[(String, Expr)]
     private var curLayer = 0
@@ -77,9 +93,10 @@ object LpsCode {
     private val Here: Expr = And(AnyChar)
 
     /** A compiled pointer: extent, letter/separator tests, site code (consuming), static kinds, input kind. */
-    private final case class P(ext: Expr, isLetter: Expr, isSep: Expr, code: Expr, kinds: Set[K], inp: Inp) {
-      def sites: Vector[Site] = domain(kinds)
+    private final case class P(ext: Expr, isLetter: Expr, isSep: Expr, code: Expr, kinds: Set[K], inp: Inp, ss: Option[Vector[Site]] = None) {
+      def sites: Vector[Site] = sitesOf(kinds, ss)
     }
+    private def union(ps: Iterable[P]): Option[Vector[Site]] = pts.map(_ => ps.flatMap(_.sites).toVector.distinct.sorted)
 
     /** the zero-width test "the pointer's site has colour c" */
     private def isColour(p: P, c: Int): Expr = look(and(p.code, Ref(SiteCode.tail(c))))
@@ -110,15 +127,15 @@ object LpsCode {
     private def regName(r: String, t: Int): String = defAt(r, t, regWrites(r))
     private def bitRef(b: String, t: Int): Expr = Ref(defAt(b, t, bitWrites(b)))
 
-    private def ruleP(name: String, kinds: Set[K]): P = {
+    private def ruleP(name: String, kinds: Set[K], ss: Option[Vector[Site]]): P = {
       require(!(kinds(KInp) && kinds.exists(_ != KInp)), s"$name: a pointer with both an input and a machine kind is not supported")
       val inp = hint(name, kinds)
-      P(Ref(name), letterOf(name, inp), sepOf(name, inp), codeOf(name, kinds), kinds, inp)
+      P(Ref(name), letterOf(name, inp), sepOf(name, inp), codeOf(name, kinds, ss), kinds, inp, ss)
     }
-    private def regP(r: String, t: Int): P = ruleP(regName(r, t), regKinds(r))
+    private def regP(r: String, t: Int): P = ruleP(regName(r, t), regKinds(r), regPts(r))
     private def fieldKindsAt(l: Int, i: Int, f: Int): Set[K] = m.tagsAt(l, i).flatMap(tag => m.fieldKinds(tag, f)).toSet
     private def fieldName(l: Int, i: Int, f: Int): String = s"C_${l}_${i}_p$f"
-    private def cellFieldP(l: Int, i: Int, f: Int): P = ruleP(fieldName(l, i, f), fieldKindsAt(l, i, f))
+    private def cellFieldP(l: Int, i: Int, f: Int): P = ruleP(fieldName(l, i, f), fieldKindsAt(l, i, f), fieldPts(l, i, f))
 
     private def named(p: P, t: Int): P = {
       fresh += 1
@@ -126,7 +143,7 @@ object LpsCode {
       emit((x, p.ext))
       if (p.inp == BothInp) { emit((s"${x}_kL", p.isLetter)) }
       if (p.sites.nonEmpty) { emit((s"${x}_c", p.code)) }
-      P(Ref(x), letterOf(x, p.inp), sepOf(x, p.inp), if (p.sites.nonEmpty) { Ref(s"${x}_c") } else { FalseE }, p.kinds, p.inp)
+      P(Ref(x), letterOf(x, p.inp), sepOf(x, p.inp), if (p.sites.nonEmpty) { Ref(s"${x}_c") } else { FalseE }, p.kinds, p.inp, p.ss)
     }
 
     private def compE(e: E, t: Int): P = e match {
@@ -143,7 +160,7 @@ object LpsCode {
         val i = e match { case MadeAt(j) => j; case _ => 0 }
         val kinds: Set[K] = m.tagsAt(t, i).map(KTag.apply).toSet
         // the cell's own position: its code is the helper of its colour, evaluated here (needs colour <= remaining length)
-        P(Here, FalseE, FalseE, and(Here, Ref(SiteCode.code(colour((t, i))))), kinds, Set())
+        P(Here, FalseE, FalseE, and(Here, Ref(SiteCode.code(colour((t, i))))), kinds, Set(), pts.map(_ => Vector((t, i))))
       case Ite(_, _, _) =>
         val cases = Vector.newBuilder[(Expr, P)]
         var cur: E = e
@@ -161,7 +178,7 @@ object LpsCode {
         val ms = masks.result()
         val rest = and(remaining*)
         def sel(f: P => Expr): Expr = or((ms.zip(rs).map { case (h, (_, pa)) => and(look(h), f(pa)) } :+ and(look(rest), f(pd)))*)
-        P(sel(_.ext), sel(_.isLetter), sel(_.isSep), sel(_.code), kinds, rs.map(_._2.inp).foldLeft(pd.inp)(_ ++ _))
+        P(sel(_.ext), sel(_.isLetter), sel(_.isSep), sel(_.code), kinds, rs.map(_._2.inp).foldLeft(pd.inp)(_ ++ _), union(rs.map(_._2) :+ pd))
       case Fld(MadeAt(i), f) if m.sitesAt(t).indices.contains(i) =>
         if (fieldKindsAt(t, i, f).isEmpty) { P(FalseE, FalseE, FalseE, FalseE, Set(), Set()) } else { cellFieldP(t, i, f) }   // an always-null field
       case Fld(x, f) =>
@@ -179,7 +196,7 @@ object LpsCode {
           // read is null there, which is what no matching arm gives (a register domain that unites two tags, e.g. `tmp`)
           if (tags.intersect(pxTags).isEmpty || fieldKindsAt(l, i, f).isEmpty) { None }
           else {
-            val atCell = if (tags.size == 1) { TrueE } else { or(tags.intersect(pxTags).toVector.sorted.map(tag => tagTest(l, i, tag))*) }
+            val atCell = if (tags.size == 1 || opts.sound) { TrueE } else { or(tags.intersect(pxTags).toVector.sorted.map(tag => tagTest(l, i, tag))*) }
             Some((x, look(atCell), cellFieldP(l, i, f)))
           }
         }
@@ -191,7 +208,8 @@ object LpsCode {
           (if (sas.isEmpty) { FalseE } else { dispatch(px, siteAlts.map(_._1), x => { val (atCell, fp) = sas(x); and(px.ext, atCell, g(fp)) }) }))*)
         // letter/separator tests are zero-width; the code is a consuming extent and is never wrapped
         def pred(g: P => Expr): Expr = look(choose(p => look(g(p))))
-        P(choose(_.ext), pred(_.isLetter), pred(_.isSep), choose(_.code), kinds, (inputAlts.map(_._2.inp) ++ siteAlts.map(_._3.inp)).foldLeft(Set.empty[Char])(_ ++ _))
+        P(choose(_.ext), pred(_.isLetter), pred(_.isSep), choose(_.code), kinds, (inputAlts.map(_._2.inp) ++ siteAlts.map(_._3.inp)).foldLeft(Set.empty[Char])(_ ++ _),
+          union(siteAlts.map(_._3)))
     }
 
     private val uses = mutable.HashMap.empty[C, Int]
@@ -249,7 +267,7 @@ object LpsCode {
         val p = compE(e, t)
         if (tag < sepTag) { and(look(p.isLetter), look(and(p.ext, Lit(m.alphabet.charAt(tag).toString)))) }
         else if (tag == sepTag) { and(look(p.isSep), look(p.ext)) }
-        else { look(dispatch(p, p.sites, { case (l, i) => look(and(p.ext, tagTest(l, i, tag))) })) }
+        else { look(dispatch(p, p.sites, { case (l, i) => val tt = tagTest(l, i, tag); if (opts.sound && tt == TrueE) { TrueE } else { look(and(p.ext, tt)) } })) }
       case C.SameTag(a, b) =>
         val pa = compE(a, t)
         val pb = compE(b, t)
@@ -264,22 +282,22 @@ object LpsCode {
       case TE.Ite(c, a, b) => val cc = compC(c, t); or(and(look(cc), compTE(a, t, i, k)), and(Not(cc), compTE(b, t, i, k)))
     }
 
-    private def emitPointer(name: String, e: E, t: Int, kinds: Set[K]): Unit = {
+    private def emitPointer(name: String, e: E, t: Int, kinds: Set[K], ss: Option[Vector[Site]]): Unit = {
       val p0 = e match {
         case Fld(_, _) | Ite(_, _, _) if !memoE.contains((e, t)) => compE0(e, t)
         case _ => compE(e, t)
       }
-      emitPointerP(name, p0, kinds)
+      emitPointerP(name, p0, kinds, ss)
       e match {
-        case Fld(_, _) | Ite(_, _, _) if !memoE.contains((e, t)) => memoE((e, t)) = ruleP(name, kinds)
+        case Fld(_, _) | Ite(_, _, _) if !memoE.contains((e, t)) => memoE((e, t)) = ruleP(name, kinds, ss)
         case _ => ()
       }
     }
-    private def emitPointerP(name: String, p: P, kinds: Set[K]): Unit = {
+    private def emitPointerP(name: String, p: P, kinds: Set[K], ss: Option[Vector[Site]]): Unit = {
       emit((name, p.ext))
       if (kinds(KInp)) { inpOutB += name -> p.inp }
       if (kinds(KInp) && p.inp == BothInp) { emit((s"${name}_kL", p.isLetter)) }
-      if (domain(kinds).nonEmpty) { emit((s"${name}_c", p.code)) }
+      if (sitesOf(kinds, ss).nonEmpty) { emit((s"${name}_c", p.code)) }
     }
 
     def grammar(): Grammar = {
@@ -303,7 +321,7 @@ object LpsCode {
         emit((s"${r}_0", and(prev, Ref(last))))
         if (kinds(KInp)) { inpOutB += s"${r}_0" -> hint(last, kinds) }
         if (kinds(KInp) && hint(last, kinds) == BothInp) { emit((s"${r}_0_kL", look(and(prev, Ref(s"${last}_kL"))))) }
-        if (domain(kinds).nonEmpty) { emit((s"${r}_0_c", and(prev, Ref(s"${last}_c")))) }
+        if (sitesOf(kinds, regPts(r)).nonEmpty) { emit((s"${r}_0_c", and(prev, Ref(s"${last}_c")))) }
       }
       for (b <- m.bits) {
         val carried = look(and(prev, bitRef(b, B)))
@@ -317,10 +335,10 @@ object LpsCode {
           for (k <- 0 until nbits(m.tagsAt(t, i).size)) { emit((s"C_${t}_${i}_g$k", compTE(cl.tag, t, i, k))) }
           for (f <- 1 to 4; kinds = fieldKindsAt(t, i, f) if kinds.nonEmpty) {
             val src: E = f match { case 1 => cl.p1; case 2 => cl.p2; case 3 => cl.p3; case _ => cl.p4 }
-            emitPointer(fieldName(t, i, f), src, t, kinds)
+            emitPointer(fieldName(t, i, f), src, t, kinds, fieldPts(t, i, f))
           }
         }
-        for ((r, kinds) <- m.regs) { step.regs.get(r).foreach { e => emitPointer(s"${r}_$t", e, t, kinds) } }
+        for ((r, kinds) <- m.regs) { step.regs.get(r).foreach { e => emitPointer(s"${r}_$t", e, t, kinds, regPts(r)) } }
         for (b <- m.bits) { step.bits.get(b).foreach { c => emit((s"${b}_$t", compC(c, t))) } }
       }
       new Grammar(rules.result())
@@ -339,12 +357,19 @@ object LpsCode {
     var domains: Vector[Set[Site]] = Vector()
     var done = false
     while (!done) {
-      val c = new Compiler(m, hints, trivial, trivialCount, Options(None, 0, opts.dispatch))
+      val c = new Compiler(m, hints, trivial, trivialCount, Options(None, 0, opts.dispatch, pointsTo = opts.pointsTo))
       c.grammar()
       val next = (hints.keySet ++ c.inpOut.keySet).map(k => k -> (hints.getOrElse(k, Set.empty[Char]) ++ c.inpOut.getOrElse(k, Set.empty[Char]))).toMap
       if (next == hints) { done = true; domains = c.domains } else { hints = next }
     }
-    val coloring = SiteCode.color(domains)
+    val coloring0 = SiteCode.color(domains)
+    val coloring = if (!opts.recolour) { coloring0 } else {
+      val g0 = new Compiler(m, hints, coloring0.apply, math.max(coloring0.count, 1), opts).grammar()
+      val refs = g0.rules.flatMap { case (_, e) => PegBudgetInline.occurrences(e).toVector }.groupMapReduce(_._1)(_._2.toLong)(_ + _)
+      val byUse = (0 until coloring0.count).sortBy(i => (-refs.getOrElse(SiteCode.tail(i), 0L), i))
+      val perm = byUse.zipWithIndex.toMap   // old colour -> new colour
+      SiteCode.Coloring(coloring0.colors.map { case (site, col) => site -> perm(col) }, coloring0.count)
+    }
     val c = new Compiler(m, hints, coloring.apply, math.max(coloring.count, 1), opts)
     val g = c.grammar()
     require(c.domains.toSet == domains.toSet, "the domains changed with the colouring")
@@ -376,6 +401,7 @@ object LpsCode {
   def checkRules(m: Machine, w: String, opts: Options = Options()): Option[String] = {
     val res = compileMeta(m, opts)
     val mt = res.grammar.matcher(w)
+    val defined = res.grammar.rules.map(_._1).toSet
     val n = w.length
     def lastWriter(r: String): Int = { var l = m.budget; while (l > 0 && !m.slotAt(l).regs.contains(r)) { l -= 1 }; l }
     var bad: Option[String] = None
@@ -390,7 +416,8 @@ object LpsCode {
           val wantExt = if (c == null) { None } else { Some(tick - c.tick) }
           if (ext != wantExt) { bad = Some(s"tick $tick '$w': $name extent $ext, expected $wantExt (cell tick ${if (c == null) "-" else c.tick.toString})") }
           else if (m.sitesOf(kinds).nonEmpty) {
-            val code = mt.rule(s"${name}_c", p)
+            // with `pointsTo` a register that never holds a cell has no code rule: its code is then None
+            val code = if (defined(s"${name}_c")) { mt.rule(s"${name}_c", p) } else { None }
             val wantCode = if (c == null || c.tag <= m.alphabet.length) { None } else { Some(n - res.coloring((c.layer, c.site))) }
             if (code != wantCode) { bad = Some(s"tick $tick '$w': ${name}_c ends at $code, expected $wantCode") }
           }
