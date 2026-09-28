@@ -414,6 +414,65 @@ object Main {
           "rounds" -> trace.map { case (n, nodes, p) => s"$n/$nodes/$p" }.mkString(" "), "sha256_uncompressed" -> sha))
         java.nio.file.Files.write(java.nio.file.Paths.get(outJson), json.getBytes("UTF-8"))
       }
+    case "life-work" :: kyS :: w0S :: maxS :: rest0 =>
+      // life-work <ky> <W0> <maxLen> [role flags] [beta=..] (STRATEGY.md §3k): per life of the young role (a birth to the next one),
+      // its busy steps and the cells they make by kind, on the build side and on the match side (the q2 bit), per tick of the life.
+      // A pipelined young role (a builder and a matcher in their own slots) needs at least (steps of a side) / (ticks of the life)
+      // slots for that side: these are the lower bounds, over the lives of the families
+      val sc = OverlapPal.schedArg(rest0)
+      val ro = RolePal.Options(youngPattern = RolePal.patternOf(rest0), youngReport = !rest0.contains("noacc"), fuseIn = rest0.contains("fuse"),
+        compact = rest0.contains("compact"), endAsEntry = rest0.contains("endent"), endOnce = rest0.contains("endonce"), sched = sc,
+        unfold = rest0.contains("unfold"), mergeTmp = rest0.contains("tmp"), lgap = rest0.contains("lgap"), merge2 = rest0.contains("merge2"),
+        merge3 = rest0.contains("merge3"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => rest0.contains(s"no$x")))
+      val m = RolePal.machine(kyS.toInt, 4, w0S.toInt, ro)
+      val maxLen = maxS.toInt
+      val words = OverlapProfile.switchWords(maxLen, sc) ++ OverlapProfile.adversarialWords(maxLen, sc).take(150) ++ OverlapProfile.everyLengthWords(maxLen)
+      val tg = RolePal.tagsOf(ro)
+      def kindOf(tag: Int): String =
+        if (tag == tg.LNODE || tag == tg.GNODE) { "list" } else if (tag == tg.KNODE) { "K" } else if (tag == tg.RNODE) { "R" }
+        else if (tag == tg.ENTRY || tag == tg.END) { "entry" } else if (tag == tg.IQC) { "queue" } else { "other" }
+      val kinds = Vector("entry", "R", "list", "K", "queue")
+      val young = m.regs.map(_._1).filter(_.startsWith("y_"))
+      final case class Life(ticks: Int, build: Int, matchS: Int, cells: Map[(String, String), Int])
+      val lives = Vector.newBuilder[Life]
+      for (w <- words) {
+        var pre: Lpm.State = Lpm.State(Map.empty, m.initTrue)
+        var layer = 0
+        var start = -1
+        var build = 0; var matchS = 0
+        val cells = scala.collection.mutable.HashMap.empty[(String, String), Int].withDefaultValue(0)
+        Lps.traceSlots(m, w) { (tick, slot, st) =>
+          if (slot == "CT") {
+            layer = 0
+            // CT's b0 or b1: a bank is born this tick, and the young role starts a new life
+            if (st.bits("b0") || st.bits("b1")) {
+              if (start >= 0) { lives += Life(tick - start, build, matchS, cells.toMap) }
+              start = tick; build = 0; matchS = 0; cells.clear()
+            }
+          }
+          layer += 1
+          if ((slot == "IN" || slot == "YU" || slot == "YN") && start >= 0) {
+            val changed = young.exists(r => !(pre.regs.getOrElse(r, null) eq st.regs.getOrElse(r, null))) || pre.bits.filter(_.startsWith("y_")) != st.bits.filter(_.startsWith("y_"))
+            if (changed) {
+              val side = if (pre.bits("y_q2")) { "match" } else { "build" }
+              if (side == "build") { build += 1 } else { matchS += 1 }
+              val seen = scala.collection.mutable.HashSet.empty[Lpm.RCell]
+              def visit(c: Lpm.RCell): Unit = if (c != null && c.tick == tick && c.layer == layer && c.tag > m.alphabet.length && !seen.contains(c)) { seen += c; (1 to 4).foreach(f => visit(c.fld(f))) }
+              young.foreach { r => val c = st.regs.getOrElse(r, null); if (!(pre.regs.getOrElse(r, null) eq c)) { visit(c) } }
+              seen.foreach(c => cells((side, kindOf(c.tag))) += 1)
+            }
+          }
+          pre = st
+        }
+      }
+      val ls = lives.result().filter(l => l.build + l.matchS > 0)
+      def stats(v: Vector[Double]): String = { val s = v.sorted; f"${v.sum / math.max(v.size, 1)}%.2f / ${s(math.min(s.size - 1, (0.95 * s.size).toInt))}%.2f / ${s.last}%.2f" }
+      println(s"life-work ${kyS}/4 W0 $w0S, ${words.size} words <= $maxLen, ${ls.size} young lives (complete ones: a birth to the next)")
+      println(s"  ticks per life (mean / p95 / max): ${stats(ls.map(_.ticks.toDouble))}")
+      println(s"  busy steps per tick of a life (mean / p95 / max): build ${stats(ls.map(l => l.build.toDouble / l.ticks))}; match ${stats(ls.map(l => l.matchS.toDouble / l.ticks))}; both ${stats(ls.map(l => (l.build + l.matchS).toDouble / l.ticks))}")
+      for (k <- kinds) {
+        println(s"  ${k.padTo(6, ' ')} cells per tick of a life (mean / p95 / max): build side ${stats(ls.map(l => l.cells.getOrElse(("build", k), 0).toDouble / l.ticks))}; match side ${stats(ls.map(l => l.cells.getOrElse(("match", k), 0).toDouble / l.ticks))}")
+      }
     case "kind-profile" :: kyS :: w0S :: maxS :: rest0 =>
       // kind-profile <ky> <W0> <maxLen> [role flags] [beta=..] (STRATEGY.md §3j): the young role's new cells by kind (list, K, R,
       // entry, queue) and by the phase the step started in; per tick with young work: the cells of each kind (mean, 95th percentile,

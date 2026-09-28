@@ -117,3 +117,10 @@ entry 6.4 %, queue 1.9 %.
 `kind-profile 11 128 400 noacc fuse compact endent endonce unfold tmp lgap merge2 noG noR beta=13/32` (3,283 words, 271,117 ticks
 with young work): per tick list 5.63 / p95 11 / max 11, K 1.81 / 11 / 11, R 1.91 / 9 / 11, entry 2.98 / 11 / 11, queue 3.40 / 12 / 12;
 longest runs (p99 / max) list 172 / 508, K 60 / 254, R 34 / 255, entry 128 / 360, queue 60 / 208; busy width 11 in 84.2 % of the ticks.
+
+## §3k (2026-09-28): the work of each side of the young role, per life
+
+`life-work 11 128 400 noacc fuse compact endent endonce unfold tmp lgap merge2 noG noR beta=13/32` (3,002 lives; mean / p95 / max per
+tick of a life): busy steps build 4.45 / 4.91 / 6.48, match 4.62 / 6.69 / 7.30, both 9.07 / 10.93 / 11.00; entries (build) 2.44 /
+2.48 / 2.48; rear cells 1.58 / 2.44 / 2.45; list nodes build 3.85 / 4.87 / 5.33, match 1.21 / 3.13 / 3.96; K nodes build 1.22 / 2.42 /
+2.44, match 0.43 / 1.55 / 2.44; queue cells build 1.83 / 1.92 / 2.05, match 1.19 / 1.58 / 1.63.

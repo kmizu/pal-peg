@@ -329,3 +329,14 @@ young role makes on average 5.6 list, 1.8 K, 1.9 R, 3.0 entry and 3.4 queue cell
 of the arms; but every kind hits all eleven steps at the 95th percentile, cascades run up to 508 consecutive list-making steps, and
 84 % of busy ticks are saturated. The headroom needs a matcher whose runs are bounded — a pipelined, de-amortised young role —
 which does not exist yet; the burst table is its specification.
+
+## 20. Towards a de-amortised young role (2026-09-28, `STRATEGY.md` §3k)
+
+A de-amortised young role exists in principle: the KMP automaton built by running it on the pattern (one transition per letter)
+plus real-time catenable deques for the forward sequences of entries. The first condition was measured per young life: entries are
+2.44 a tick, as 1/β predicted, but the build side needs up to 6.48 busy steps a tick and the match side 7.30, so separate builder
+and matcher slots would need about 15 layers against the 11 the shared role uses; the two sides peak at different times and share
+slots today. Pipelining pays only if the work per letter drops to about one step on each side, deque operations included — the
+open question. Queuing each pending bank's text at IN (taking the FIFO reversal out of the young role) is a smaller separate lever.
+The arms go as r L² (layers L, reads per layer r); one fat step per letter would need about 5 young layers, which pays
+if r grows less than about 4.8 times.

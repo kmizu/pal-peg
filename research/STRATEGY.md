@@ -710,6 +710,49 @@ tried beyond §3g–§3h, which already fail. Spreading the cells needs a matche
 role in which a letter's build and match take a bounded number of steps of each kind. The table above is what it would have to
 absorb; no such design yet. The current best stays §3f.
 
+## 3k. Towards a de-amortised, pipelined young role (2026-09-28)
+
+§3j measured what such a young role would have to absorb. This step asks what it would take, and measures the first condition.
+
+**What exists in principle.** The KMP automaton can be built in O(1) per pattern letter by running it on the pattern itself:
+f(k+1) = δ(f(k), P[k]), and the mismatch transition of state k follows from that of f(k); matching is one transition per text
+letter. So build and match need no amortisation. In this model, though, a "next" transition goes to a newer entry, so the forward
+sequence of entries has to be materialised as cells; the sequences needed are a stored range, one entry and the current sequence
+concatenated, which purely functional real-time catenable deques (Kaplan–Tarjan) support in O(1) worst case per operation — with
+constants of several cells per operation.
+
+**Two couplings in today's machine** (not changed here): (1) a bank's text starts at t0 = n0 − h, before its birth, and is rebuilt
+forward by prepending during the first (1 − β)h build steps, so matching cannot start before them; queuing each pending bank's text
+at IN as its letters arrive (the rear of such a queue is the input chain itself) would make it ready at birth and move the FIFO
+reversal (7.0 % of the young's busy steps) out of the young role; (2) build then match.
+
+**The first condition, measured** (`life-work 11 128 400 …`: per life of the young role, a birth to the next — 3,002 lives of
+65.8 ticks on average, 104 at most; per tick of a life, mean / p95 / max):
+
+| | build side | match side | both |
+|---|---|---|---|
+| busy steps | 4.45 / 4.91 / 6.48 | 4.62 / 6.69 / 7.30 | 9.07 / 10.93 / 11.00 |
+| entries | 2.44 / 2.48 / 2.48 | 0.01 | |
+| rear cells | 1.58 / 2.44 / 2.45 | 0 | |
+| list nodes | 3.85 / 4.87 / 5.33 | 1.21 / 3.13 / 3.96 | |
+| K nodes | 1.22 / 2.42 / 2.44 | 0.43 / 1.55 / 2.44 | |
+| queue cells | 1.83 / 1.92 / 2.05 | 1.19 / 1.58 / 1.63 | |
+
+The entries are 2.44 a tick, as the §3i estimate 1/β ≈ 2.46 said. But a pipelined young role with its own builder and matcher
+slots needs at least the busiest life's rate on each side: about 7 builder slots (6.48 steps a tick) and 8 matcher slots (7.30) —
+15 in all, against the 11 the shared young role uses today, because its two sides peak at different times of a life and share the
+same slots. Separating them costs layers, and list and K nodes would still come from both sides. **Gate 1 fails**: pipelining pays
+only if the work itself gets cheaper — the builder near one step per entry (today 1.8 on average, 2.6 in the busiest life) and the
+matcher near one step per letter, deque operations included. The DFA construction gives one transition per letter; whether the
+forward sequences can be kept for well under one extra step per transition is the open question. Phase 2 of the plan (the queued
+text) is a separate, smaller lever: it would take the FIFO reversal out of the young role; not built.
+
+**The target this leaves, as a number.** The young role's arms go roughly as L × r × L: L layers, r reads in a layer, and each read
+branching over about L sites — r L². Today L = 11. A de-amortised role that handles one letter per step, a fat step doing a whole
+DFA transition and its deque upkeep, would need about 2.5 + 2.5 ≈ 5 layers; it pays if its reads per layer stay below about
+(11 / 5)² ≈ 4.8 times today's (estimate). The merges of §3e made steps fatter to save one layer and lost; halving L is a different
+regime. That is the next design question.
+
 ## 4. The handoff's other routes, re-evaluated with these numbers
 
 - **Worst-case catenable deques (§4.4 of the handoff).** The rate is set by accumulated work on random palindromes
