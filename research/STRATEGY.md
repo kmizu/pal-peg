@@ -810,6 +810,54 @@ longer than the right one (a^(h−1)b); the simple fix of recursing on the left 
 condition could not be recovered here (the paper was not reachable, and the paraphrase "a prefix longer than u whose critical
 factorization is in its first half" does not exist for a^(h−1)b). That is the next research question.
 
+## 3m. A matcher without a table: fixed work a letter, found (2026-09-28)
+
+§3l ended on the matcher without per-position data. This step builds it (`TwoWay`, a reference model) and it meets the §3j
+specification: the young role's cells come in three kinds at fixed rates, the text costs a fixed number of comparisons and no
+cell, and nothing is amortised.
+
+**The matcher.** Crochemore and Perrin's two-way matcher in Breslauer, Grossi and Mignosi's real-time "simple version" (CPM 2011;
+the construction was recovered from the authors' slides). For a critical factorization X = u·w with |u| < π(X), a candidate s is
+scanned forward on w, one comparison a letter; a mismatch after z matched letters takes the candidate whose scan starts at the next
+letter, a full scan shifts by the period (keeping what is known) or, when the local period overflows, by |w| + 1; u is checked
+backward in parallel, one comparison a letter. When |u| > |w| the backward check cannot finish, and a second instance finds, in
+real time, the occurrences of a prefix X' ⊇ u critically factorized in its first half; the first instance then scans w only, and
+X occurs where both agree. The two are coupled by fixed countdowns: the second instance reports an occurrence of X' at start s
+exactly when the first one's candidate is s and a fixed number of letters (by how that candidate was taken) has passed (checked
+equal to comparing the starts on every binary pattern up to length 13).
+
+**In the machine's terms.** The pattern (the reversed prefix) is read forward along the input chain; backward along a list N built
+once (one cell a pattern letter); the text as it arrives and backward along the input chain. Every reset goes to a fixed pattern
+cell, every length test is a countdown that walks the input chain to its end, so the matcher needs no pointer equality and stores
+no cell: at most 3 comparisons a text letter, in the young and the old role alike.
+
+**The preprocessing, linear.** One maximal-suffix pass per order yields the maximal suffix (start and period) of every prefix
+(checked on every prefix of every binary word up to length 14); a list R records each prefix's critical factorization (one cell a
+pattern letter). The second instance's pattern comes from a chain of factorizations: while A's left part u1 is the longer, take
+the critical factorization u·v of u1 from R; when u is longer than vw, (u, vw) is critical for X with the local period overflowing
+both sides (the local period is at least |u| > |vw|, so it is a period of X) and A moves to it with no search; otherwise one search
+for u in vw decides — no occurrence: A moves to it and it is the single case; an occurrence at q: X' = X[0 .. max(|u1|, |u| + μ)]
+with μ = |u| + q, critically factorized at |u| with |u| ≤ |X'| − |u| (checked on every binary word up to length 18 by brute
+force). The chain follows R's pointers, so it costs O(1) a step; one search at the end: at most 8 steps a pattern letter (a test up
+to length 3,000), 6.08 at most on the banks.
+
+**Measured** (`two-way 128 1000 19 beta=13/32`; 7,554 words, 21,267 banks, 6,898 of them two-instance): no wrong answer, no late
+backward check, no young window late with 19 steps a young tick (18 is not enough). Up to length 400 the same (3,002 banks).
+
+| | today's young role (§3j) | the table-free young role |
+|---|---|---|
+| cells a young tick | 16 on average, 5 kinds, up to 11 of a kind, runs up to 508 steps | 6.19 on average, 6.35 at most: N and R one a pattern letter, the replay one a replayed letter |
+| a text letter | a pop or a cascade | at most 3 comparisons, no cell |
+| a pattern letter | an entry and its pops | one N cell, one R cell, 5.2 comparison and walk steps on average (6.1 at most) |
+| steps a young tick | 11 | 19 |
+| old role | 4 steps a tick, pops | at most 3 comparisons a tick, no cell |
+
+**What it would cost in the grammar (estimate, not compiled).** The young arms of today's machine go as r·L² because a read fans
+out over the ~11 layers that store its kind. Here almost every read is of an input cell (one site a tick) or of N and R cells
+(three kinds at fixed rates, so few sites), so the arms go about as r'·L' with L' = 19: the table-free role pays if its reads a
+layer stay under about 121/19 ≈ 6.4 times today's. The next step is to write it as an Lpm core (young: N, the two passes, R, the
+chain, the search, then the two instances; old: the two instances) and compile it.
+
 ## 4. The handoff's other routes, re-evaluated with these numbers
 
 - **Worst-case catenable deques (§4.4 of the handoff).** The rate is set by accumulated work on random palindromes

@@ -414,6 +414,13 @@ object Main {
           "rounds" -> trace.map { case (n, nodes, p) => s"$n/$nodes/$p" }.mkString(" "), "sha256_uncompressed" -> sha))
         java.nio.file.Files.write(java.nio.file.Paths.get(outJson), json.getBytes("UTF-8"))
       }
+    case "two-way" :: w0S :: maxS :: kS :: rest0 =>
+      // two-way <W0> <maxLen> <steps a young tick> [beta=..] (STRATEGY.md §3m): the table-free real-time matcher on the banks of
+      // the switch, adversarial and every-length words
+      val sc = OverlapPal.schedArg(rest0)
+      val maxLen = maxS.toInt
+      val words = OverlapProfile.switchWords(maxLen, sc) ++ OverlapProfile.adversarialWords(maxLen, sc).take(150) ++ OverlapProfile.everyLengthWords(maxLen)
+      print(TwoWayProbe.run(words, w0S.toInt, sc, kS.toInt).report)
     case "rt-kmp" :: w0S :: maxS :: bS :: mS :: rest0 =>
       // rt-kmp <W0> <maxLen> <builder letters per young tick> <matcher letters per young tick> [beta=..] (STRATEGY.md §3l): the
       // de-amortised matcher (Kaplan–Tarjan steques) on the banks of the switch, adversarial and every-length words

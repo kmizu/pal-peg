@@ -362,3 +362,21 @@ pattern is read forward along the input chain for free, the text as it arrives. 
 (the machine has no pointer equality; a counter chain of one cell per step replaces it), and its real-time form needs the
 two-instance construction for patterns whose left part is the longer one (the plain recursion on the left part grows: depth 3,
 4, 5 at lengths 10, 14, 18). Both are open.
+
+## 22. A matcher without a table (2026-09-28, `STRATEGY.md` §3m)
+
+`TwoWay` is the young role the §3j table asks for. Crochemore–Perrin two-way matching in Breslauer–Grossi–Mignosi's real-time
+form: forward scan of the right part and a parallel backward check of the left part, one comparison a letter each; when the left
+part is the longer, a second instance on a prefix X' (critically factorized in its first half) finds X' in real time, and the two
+are coupled by fixed countdowns. The pattern is read along the input chain (forward) and a list N (backward); resets go to fixed
+cells and lengths are countdowns to the end of the input chain, so matching stores no cell and needs no pointer equality.
+Preprocessing: one maximal-suffix pass per order gives every prefix's maximal suffix; a list R keeps every prefix's critical
+factorization; the chain of factorizations follows R, needing no search while the left part is the longer (then the local period
+overflows both sides and is a period of X), and one search at the end. Measured on 21,267 banks up to length 1,000: correct,
+never late, 19 steps a young tick, 6.2 cells a young tick (N, R, replay: fixed rates), at most 3 comparisons a text letter, at
+most 6.1 preprocessing steps a pattern letter (linear: at most 8, tested to length 3,000). Not compiled yet.
+
+Pitfalls met on the way: the backward check must count lateness only while it still agrees (a failed check stops early); when
+X' = X, the second instance reports on the same letter as the first finishes, so the coupling must look at B's report before A's
+new candidate replaces the flag; the chain of factorizations walked by searching made one search a step (up to 6 at length 1,000)
+and made the preprocessing grow with the length until the chain was read from R.
