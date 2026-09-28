@@ -392,3 +392,11 @@ per-prefix record and the chain of §3m need it. A counter-free loop is quadrati
 Later the same day: at every prefix, the later maximal suffix is the one whose start changed most recently (all prefixes of all
 binary words up to 16 and of 448 long words; no exception, not proved) — so the critical position needs no comparison. Still open:
 lookups by position into the per-prefix record (for the chain and for the search's period).
+
+## 24. No chain, no lookup (2026-09-28, `STRATEGY.md` §3o)
+
+The chain of §3m is replaced by one jump: with c(K) the prefixes' critical start (non-decreasing) and m* the last K with c(K) ≤ n/2,
+ℓ_A = c(m*+1) is critical for X (above the midpoint the local period overflows both sides) and c(ℓ_A) is below it; one search
+finishes the plan. In the machine: lists N and N' (N' nodes point into N and carry a midpoint tag), the passes walk N', the crossing
+is the tag flip, two reruns of the passes read c(ℓ_A) and u's parameters. 21,267 banks to length 1,000: correct, never late, 33
+steps and 6.2 cells a young tick, at most one change of factorization, preprocessing at most 11.8 steps a pattern letter.

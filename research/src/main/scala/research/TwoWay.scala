@@ -84,37 +84,36 @@ object TwoWay {
     rec
   }
 
-  /** The plan. One pass per order records the critical factorization (the later maximal suffix, with its period) of every prefix
-    * — in a pointer machine a list R of one cell a pattern letter, each pointing to the cell of its critical position. The first
-    * factorization of instance A is that of X; while its left part is the longer, A moves to the critical factorization of that
-    * left part u1 = X[0 .. l): when that left part u is longer than the rest, (u, vw) is critical for X with the local period
-    * overflowing both sides (it is at least |u| > |vw|, so it is a period of X), and A takes it with no search; otherwise one
-    * search for u in vw decides — no occurrence: critical and overflowing again (A takes it, and it is the single case); an
-    * occurrence at q: μ(u, vw) = |u| + q fits in vw, and X' = X[0 .. max(l, |u| + μ)] is critically factorized at |u|. */
+  /** The plan, with no chain (STRATEGY.md §3o). The critical start of the prefixes, c(K) (the later of the two maximal suffixes), is
+    * non-decreasing in K. If c(n) ≤ n − c(n), one instance. Otherwise let m* be the last K with c(K) small (2·c(K) ≤ n): then
+    * ℓ_A = c(m*+1) is not small, so it is critical for X with the local period overflowing both sides (it is at least ℓ_A > n − ℓ_A),
+    * and ℓ' = c(ℓ_A) ≤ c(m*) is small. One search for u = X[0 .. ℓ') in X[ℓ' ..] decides: no occurrence — one instance on ℓ'
+    * (critical, overflowing); an occurrence at q — X' = X[0 .. max(ℓ_A, 2ℓ' + q)], critically factorized at ℓ' with period ℓ' + q.
+    * In the machine the passes run over lists N (pattern backward) and N' (pattern forward, its nodes pointing into N and tagged
+    * above/below the midpoint), the crossing is seen by the tag, and c(ℓ_A) and u's parameters are read by rerunning the passes up to
+    * ℓ_A and up to ℓ' (countdowns along N); a few races set the countdown cells of the instances. All of it is counted in `c`. */
   def plan(x: String, c: Cost): Plan = {
     val n = x.length
+    c.steps += 2L * n                                              // the lists N and N'
     val lt = prefixMaxSuffixes(x, rev = false, c); val gt = prefixMaxSuffixes(x, rev = true, c)
-    c.steps += n                                                   // the list R
     def crit(k: Int): (Int, Int) = if (lt(k)._1 >= gt(k)._1) { lt(k) } else { gt(k) }
+    def small(v: Int): Boolean = 2 * v <= n
     val (lc, pc) = crit(n)
-    val periodic = lc + pc <= n && (0 until lc).forall { i => c.steps += 1; x(i) == x(pc + i) }
-    var l = lc; var shift = if (periodic) { pc } else { math.max(lc, n - lc) + 1 }; var memory = periodic
-    var switches = 0
-    var trail = List[Int]()
-    while (l > n - l) {
-      val lp = math.max(1, crit(l)._1)
-      if (lp > n - lp) { trail = l :: trail; l = lp; shift = n - lp + 1; memory = false; switches += 1 }
-      else {
-        val cu = crit(lp)
-        val q = search(x.substring(0, lp), x.substring(lp), c, Some(cu))
-        if (q < 0) { trail = l :: trail; l = lp; shift = n - lp + 1; memory = false; switches += 1 }
-        else {
-          val mu = lp + q
-          return Plan(l, shift, memory, math.max(l, lp + mu), lp, mu, switches, (l :: trail).reverse)
-        }
-      }
+    if (small(lc)) {
+      val periodic = lc + pc <= n && (0 until lc).forall { i => c.steps += 1; x(i) == x(pc + i) }
+      Plan(lc, if (periodic) { pc } else { math.max(lc, n - lc) + 1 }, periodic)
+    } else {
+      val mStar = (1 until n).filter(k => small(crit(k)._1)).last  // seen online by the midpoint tag of the critical start
+      val la = crit(mStar + 1)._1
+      prefixMaxSuffixes(x.substring(0, la), rev = false, c); prefixMaxSuffixes(x.substring(0, la), rev = true, c)   // rerun to ℓ_A
+      val lp = math.max(1, crit(la)._1)
+      val u = x.substring(0, lp)
+      val ult = prefixMaxSuffixes(u, rev = false, c); val ugt = prefixMaxSuffixes(u, rev = true, c)                // rerun to ℓ'
+      val cu = if (ult(lp)._1 >= ugt(lp)._1) { ult(lp) } else { ugt(lp) }
+      val q = search(u, x.substring(lp), c, Some(cu))
+      if (q < 0) { c.steps += n; Plan(lp, n - lp + 1, memory = false, switches = 1) }
+      else { c.steps += 4L * n; val mu = lp + q; Plan(la, n - la + 1, memory = false, math.max(la, lp + mu), lp, mu) }
     }
-    Plan(l, shift, memory, switches = switches, trail = (l :: trail).reverse)
   }
 
   /** one instance: pattern y (the first `n` letters of the pattern), factorization l, shift, memory; with `backfill`, y[0 .. l)
@@ -218,8 +217,8 @@ object TwoWayProbe {
         val pl = plan(p, c)
         if (pl.double) { doubles += 1 }
         switches += pl.switches; maxSwitches = math.max(maxSwitches, pl.switches)
-        val cells = 2 * h + (h - t0)                   // N, R (counted in the plan's steps) and the forward replay list
-        val prep = c.steps + h + (h - t0)              // building N and the replay list is a step a cell
+        val cells = 2 * h + (h - t0)                   // N and N' (counted in the plan's steps) and the forward replay list
+        val prep = c.steps + (h - t0)                  // building the replay list is a step a cell (N and N' are in the plan)
         prepPerLetterMax = math.max(prepPerLetterMax, prep.toDouble / h); prepPerLetterSum += prep.toDouble / h
         val window = n0 - h + 1
         cellsPerTickMax = math.max(cellsPerTickMax, cells.toDouble / window); cellsPerTickSum += cells.toDouble / window
@@ -251,7 +250,7 @@ object TwoWayProbe {
       f"$switches switches, at most $maxSwitches in a bank), wrong $wrong, late $late, young windows too slow $tooSlow\n" +
       f"  preprocessing steps a pattern letter: mean ${prepPerLetterSum / banks}%.2f, max $prepPerLetterMax%.2f (" + pct(prepVals) + ")\n" +
       f"  matcher work a letter (comparisons): max $workMax\n" +
-      f"  cells a young tick (N, R and the replay list): mean ${cellsPerTickSum / banks}%.2f, max $cellsPerTickMax%.2f\n" +
+      f"  cells a young tick (N, N' and the replay list): mean ${cellsPerTickSum / banks}%.2f, max $cellsPerTickMax%.2f\n" +
       f"  steps a young tick needed (preprocessing + matching over the window): max $needMax%.2f (" + pct(needVals) + ")\n"
     Stats(report, wrong, late, tooSlow, prepPerLetterMax, needMax)
   }

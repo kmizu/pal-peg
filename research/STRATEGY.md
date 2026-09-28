@@ -899,6 +899,39 @@ but are not in hand. With that lookup the whole preprocessing is O(1) a step (th
 a tag on the record, set by a countdown from the midpoint cell that a double-speed walk finds once); without it, the chain reruns
 the loop on each prefix, which grows with the length.
 
+## 3o. The last piece: no chain, no lookup (2026-09-28)
+
+§3n left one operation open: reading the per-prefix record by position, for the chain of factorizations and for the search's
+parameters. It is not needed.
+
+**Jump to the crossing.** The critical start of the prefixes, c(K), is non-decreasing in K. If c(n) is small (2·c(n) ≤ n), one
+instance suffices. Otherwise let m* be the last K with c(K) small and take ℓ_A = c(m*+1). It is not small, so for u = X[0 .. ℓ_A)
+the local period is at least |u| > n − ℓ_A: it overflows both sides, is a period of X, and ℓ_A is critical for X with ℓ_A < π(X).
+And ℓ' = c(ℓ_A) ≤ c(m*) is small. One search for X[0 .. ℓ') in X[ℓ' ..] finishes the plan as in §3m. The chain, which went down
+one factorization at a time, goes to the one place where the staircase crosses the midpoint.
+
+**In the machine's terms.** Two lists: N (the pattern backward) and N' (the pattern forward; each node points to its N node and is
+tagged above or below the midpoint — the midpoint found by a pointer walking two steps per node). The passes walk N', so they hold
+the N node of any position they visit; "small" is a tag; the critical start is the pass that changed last (§3n); the crossing is the
+change whose tag flips. c(ℓ_A) and u's parameters are read by rerunning the passes up to ℓ_A and up to ℓ' (a countdown along N
+from the node the crossing handed over). A few races set the instances' countdown cells. No record, no lookup by position, no
+comparison of positions.
+
+**Measured** (`two-way 128 1000 33 beta=13/32`; 21,267 banks up to length 1,000): no wrong answer, never late, every young window
+in time with **33 steps a young tick** (32 is not enough); at most one change of factorization in any bank; preprocessing 7.6 steps
+a pattern letter on average and 11.8 at most — linear, 16 at most (tested to length 3,000); cells a young tick 6.2 (N, N' and the
+replay at fixed rates); at most 3 comparisons a text letter. The every-pattern test (length ≤ 11) passes with this plan.
+
+| | today's young role | §3m (as a reference model) | §3o (realizable as designed) |
+|---|---|---|---|
+| steps a young tick | 11 | 19 | 33 |
+| cells a young tick | 16, 5 kinds, bursts | 6.2 | 6.2 |
+| position comparisons | — | the later maximal suffix, the chain, lookups | none |
+| a text letter | a pop or a cascade | ≤ 3 comparisons | ≤ 3 comparisons |
+
+The young budget grew from 19 to 33 because the realizable preprocessing reruns the passes twice and needs N' and a few races; all
+of it reads input cells and the two lists. The next step is the Lpm core itself.
+
 ## 4. The handoff's other routes, re-evaluated with these numbers
 
 - **Worst-case catenable deques (§4.4 of the handoff).** The rate is set by accumulated work on random palindromes
