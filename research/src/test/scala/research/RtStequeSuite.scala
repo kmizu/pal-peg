@@ -3,6 +3,8 @@ package research
 /** STRATEGY.md §3l: the real-time catenable steque against a list model, on random persistent histories (every operation
   * applies to any version kept so far), with its invariants and a bound on the cells one operation stores. */
 class RtStequeSuite extends munit.FunSuite {
+  // the random-history test takes about 22 s alone and passed the 30 s default only when the machine was idle
+  override val munitTimeout: scala.concurrent.duration.Duration = scala.concurrent.duration.Duration(2, "min")
   import RtSteque.*
 
   /** applies `n` random operations; returns the largest number of cells one operation stored */
