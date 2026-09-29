@@ -18,6 +18,11 @@ grammar that replaces them (13/4, β 7/16, W₀ 64): 999 rules at ×4.40, 2,984,
 fallback) compiled with `sound` and points-to domains, common sub-expressions named: 996 rules at 349,849 rhs nodes (×2.45),
 1,542,201 bytes; ×2.2 1,044, ×3 933. (§3e: 994 rules at 438,487; §3d: 996 at 472,260.)
 
+**Correction (§3q): the §3f machine and its 996-rule grammar are not correct on every input** — they reject, among others, the
+palindrome b a⁷⁴ b a⁵³ b a⁶ b a⁵³ b a⁷⁴ b (the young role's rate of 11 was not the worst case; the other grammars below 1,000 rules
+fail too). **Current best that is correct on everything tested (§3q):** young 16, old 3, merge3 (β 13/32, W₀ 128): 1,357 rules at
+×2.45, 590,263 rhs nodes, 2,664,616 bytes, rates chosen against stress palindromes and the young role's worst-case work.
+
 ## 1. Diagnosis: what survives the inliner, and why (measured)
 
 `probes/survivors.py out/pools-role-y15-o4-n999.peg.gz` — the 999 rules by kind:
@@ -519,7 +524,7 @@ Measured on the §3e machine (role 11/4, `lgap` + U, β 13/32, W₀ 128, mirrore
 With both, the arms fall from 12,213 to 9,736; the old-role arms of young reads from 4.5 % to 0.2 %, the tag bits in arms
 from 6.9 % to 1.0 %. The curve with naming: ×2.2 1,044, ×2.35 1,018, ×2.45 996, ×2.56 984, ×2.8 949, ×3 933 (428,580
 nodes, where §3e needed 438,487 for 994). `out/anchors-role-y11-o4-w128-pts-n996.peg.gz`: **996 rules, 349,849 rhs nodes,
-1,542,201 bytes** (−20 % nodes against §3e). Checks: no undefined reference; re-parsed = oracle on all words ≤ 9; the Rust
+1,542,201 bytes** (−20 % nodes against §3e). (§3q: this grammar is not correct on every input — its young rate was not the worst case.) Checks: no undefined reference; re-parsed = oracle on all words ≤ 9; the Rust
 runner gives 0 mismatches on the 168 words of §3c, 796 words of every length 3–200 and every counterexample of both resource
 files. The machine is the §3e one, so its rates stand. Still an observation, not a proof.
 
@@ -1010,7 +1015,7 @@ counted the cells at their average rate (6.2 a tick); the fan-out is set by the 
 
 The list-read arms fall by at most 28 %, while everything else in a layer grows with the layer count: nowhere near the factor five.
 
-**Standing.** The current best stays §3f (996 rules). What this establishes: a table-free matcher makes the old role nearly free
+**Standing.** The current best stays §3f (996 rules; §3q later found it not correct on every input). What this establishes: a table-free matcher makes the old role nearly free
 (one layer, 98 rules) and needs no amortisation; its preprocessing, as designed, reads list cells at every step, and in this
 compilation scheme that costs about one arm per young layer per read. A young role that fits would need a preprocessing whose
 steps read mostly input cells, or lists made in a few layers without the burst — neither is at hand.
@@ -1023,6 +1028,113 @@ sbt "run two-way-pal-check 27 1 64 200 100000 beta=13/32"      # the Lpm machine
 sbt "run lps-code optimize twoway 27 1 64 out.json star mirror sound pts beta=13/32"
 ```
 
+## 3q. The rates were not worst-case: §3f is not correct on every input (2026-09-29/30)
+
+Looking for a better route after §3p, one idea was to let the old role fall behind (below). Checking it against words built to
+stress the old role found something more important: **the machine of §3f, and its 996-rule grammar, reject some palindromes.**
+
+**An old role that may fall behind.** While the old role has not finished the letters before the newest one, the newest tick's
+answer is already "no": the push of the new letter clears `acc`, and only a full match on the newest letter sets it. That answer is
+right unless an occurrence ends at the newest letter. With j the matched length after the last finished letter and d the letters
+since, such an occurrence would have to start at least m − j letters after the current partial match, which KMP's maximality forbids
+unless d ≥ m − j (the pointer P[j + d] of the current state's letter cell, one step on per arriving letter, is non-null exactly
+while the answer is certainly "no"). So the old role's budget is set by the "yes" ticks only, not by every tick. On the standard
+families the §3f machine with 3 old steps (11/3) is right on all 3,483 words up to 400 and all 7,929 words up to 1,000 with every
+length to 1,025 (`role-outputs`), and its grammar is 938 rules at ×2.45 (1.42 MB; 920 at §3f's node count).
+
+**Palindromes that stress the roles** (`OldLag.lagWords`): u · [c] · reverse(u) with u from Fibonacci and Thue–Morse words,
+periodic words with sparse defects, biased random words, repeated random blocks, and powers of palindromes. On 3,000 of them (lengths
+179–400, seed 1) the §3f machine **11/4 answers wrong on 58 words** (the last tick of a palindrome, or a palindromic prefix of the
+reading order), 11/3 on 129, 11/2 on 458. The committed grammar `out/anchors-role-y11-o4-w128-pts-n996.peg.gz` rejects, in the
+Rust runner, the palindrome b a⁷⁴ b a⁵³ b a⁶ b a⁵³ b a⁷⁴ b (length 266).
+
+**The cause is the young role's rate.** On that word, 11/4 is wrong and 11/12 is still wrong (the old role cannot finish a build it
+was handed), 20/4 and 20/12 are right. The young role's work per tick of its window (`young-need`, YU steps that change a young
+register with 40 young steps a tick, divided by the window), measured:
+
+| words | p50 | p99 | max |
+|---|---:|---:|---:|
+| the standard families, ≤ 400 (3,283) | — | 10.79 | 11.88 |
+| stress palindromes, ≤ 400 (3,000) | 9.51 | 13.21 | 18.54 |
+| stress palindromes, ≤ 1,000 (1,500) | 9.91 | 14.79 | 19.07 |
+| (a^i b^j)^r, i ≤ 12, j ≤ 3, lengths 1,000 / 2,000 / 4,000 | 9.5 | 10.0 | 10.05 |
+
+The worst words are palindromes of periodic halves: ((aaaabb)^k …) mirrored, 19.07 at length 975. On the worst of them the young
+role spends about 29 % of its steps reversing rear stacks one entry a step (rev, rev-last, takeRev). The rates of every earlier
+result (§3e, §3f and the pools and under-1000 grammars) were validated on fixed families whose worst case is about 12; they were
+never worst-case.
+
+Young budgets on the 3,000 stress palindromes (old 4): 11 → 58 words wrong, 12 → 16, 14 → 1, 16 → 1, 18 → 0, 20 → 0. With 20 young
+steps the old role needs only 3 there (20/3, 20/4, 20/5: 0 wrong), as the argument above predicts.
+
+**What a correct machine of the §3f kind costs** (measured, same options and compiler flags):
+
+| machine | compact rules | nodes | colours | at ×2.45 |
+|---|---:|---:|---:|---|
+| §3f 11/4 (wrong on stress words) | 3,521 | 143,051 | 22 | 996 rules, 1.54 MB |
+| 20/4 | 5,528 | 305,987 | 40 | 1,569 rules, 749,208 nodes, 3.56 MB |
+| 20/3 | 5,342 | 294,053 | 40 | 1,529 rules, 719,867 nodes, 3.45 MB |
+
+The table-free machine of §3p is more robust (its preprocessing is bounded by construction): on 3,000 stress palindromes up to 1,000
+it needs 30 young steps (27: 14 late windows), up from 27 — 11 %, against 80 % for GapKmp — but it stays far larger.
+
+**Options chosen for the worst case.** The §3e options were chosen on the average of the fixed families. On the worst case
+(`young-need`, the 3,000 stress palindromes up to 400, then 1,500 up to 1,000), measured:
+
+| young options (on top of noacc tmp compact endent endonce unfold lgap merge2) | max ≤ 400 | max ≤ 1,000 |
+|---|---:|---:|
+| noG noR (§3f) | 18.54 | 19.07 |
+| noG | 18.50 | — |
+| none (merge2's G and R on) | 18.46 | — |
+| **noG noR merge3** | 15.60 | **16.12** |
+| noG merge3 | 15.56 | 15.37 |
+| merge3 | 15.52 | 15.34 |
+
+merge3 (a one-node splice skips its no-op step, the splice's last step takes the list it put on top, a matched build step takes a
+one-entry reversal from the top of K) takes about a sixth off the worst case, where §3e found it worth nothing on average. On the worst
+word the young role still spends about 30 % of its steps on rear-stack reversals (rev, rev-last, takeRev).
+
+**Correct machines, validated and compiled** (measured; validation = `role-outputs` on the 3,000 stress palindromes up to 400, seed 1;
+1,500 up to 1,000, seed 3; and the standard families up to 1,000 with every length to 1,025, 7,929 words):
+
+| machine | validation | compact rules | nodes | colours | at ×2.45 |
+|---|---|---:|---:|---:|---|
+| 20/3 | 0 / 0 / 0 wrong | 5,342 | 294,053 | 40 | 1,529 rules, 3.45 MB |
+| 17/3 + merge3 (noG noR) | 0 / 0 / 0 | 4,990 | 262,414 | 34 | 1,427 rules, 2.94 MB |
+| 16/3 + merge3 (noG) | 0 / 0 / 0 | 5,017 | 267,357 | 32 | 1,428 rules, 2.96 MB |
+| **16/3 + merge3 (noG noR)** | **0 / 0 / 0** | **4,751** | **241,155** | **32** | **1,357 rules, 590,263 nodes, 2,664,616 bytes** |
+
+16/3 + merge3 (noG noR) is also right on 3,000 stress palindromes up to 600 with seed 5 and 3,000 with seed 7. **15/3 is not**: it
+answers one of seed 7's words wrong (length 461), though it passes seeds 1 and 5; compiled it would be 1,287 rules. So the margin of
+16/3 is one young step, measured; 17/3 (1,427 rules) keeps two.
+
+The 1,357-rule grammar (`out/anchors-role-y16-o3-w128-m3-pts-n1357.peg.gz`) was checked in the Rust runner on every word up to
+length 12 (8,190 words) and on 4,472 suffixes of the 58 stress palindromes that the §3f machine gets wrong (the ticks it gets wrong
+and every seventh length besides): 0 mismatches, where the 996-rule grammar has 58. The 994-rule grammar of §3e also has 58, the
+§3d 996-rule and the 998-rule grammars 6, the W₀ 64 999-rule grammar 5 (the stress words were made for the anchors of W₀ 128,
+β 13/32).
+
+
+**The route from here.** (1) Rates are chosen against the worst case — stress palindromes and `young-need` (the young role's work
+per window tick) — not against fixed families: a fixed family has now missed a wrong answer twice (§3b and here). (2) Options are
+chosen by the worst case too (merge3 is worth a sixth there). (3) The old role's budget follows from the "yes" ticks: 3 steps, not 4.
+(4) What to cut next is the young role's worst-case work, about 16 steps a window tick, of which rear-stack reversals are about 30 %;
+a young role whose work per letter is bounded by construction (as the table-free one is) would turn the rate into a theorem. The
+rates are still measurements: a family of words not yet thought of could need more.
+
+**Current best that is correct on everything tested: 16/3 + merge3 (noG noR), 1,357 rules at ×2.45, 2.66 MB** — 13.5 % below the
+plain correction 20/4 (1,569 rules, 3.56 MB). It is larger than the 996 rules of §3f, which were not correct.
+
+Reproduce (from `research/`):
+
+```sh
+sbt "run role-outputs 11 4 128 400 noacc fuse tmp compact endent endonce unfold lgap merge2 noG noR beta=13/32 lagwords=3000:1"
+sbt "run role-word 11 4 128 file:<word file>:<line> …"          # one word, the wrong ticks
+sbt "run young-need 128 1000 lagwords=1500:3 noacc tmp compact endent endonce unfold lgap merge2 noG noR beta=13/32"
+sbt "run old-lag 11 128 400 …"                                  # the lag model of the old role
+sbt "run lps-code export role 16 3 128 C.peg noacc fuse compact endent endonce star unfold tmp mirror lgap merge2 noG noR merge3 sound pts beta=13/32" \
+    "run peg-cse-improve C.peg 2.45 65536 60 1000 10 out.peg"
+```
 ## 4. The handoff's other routes, re-evaluated with these numbers
 
 - **Worst-case catenable deques (§4.4 of the handoff).** The rate is set by accumulated work on random palindromes
