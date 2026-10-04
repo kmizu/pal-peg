@@ -421,12 +421,115 @@ object Main {
       val maxLen = maxS.toInt
       val words = OverlapProfile.switchWords(maxLen, sc) ++ OverlapProfile.adversarialWords(maxLen, sc).take(150) ++ OverlapProfile.everyLengthWords(maxLen)
       print(TwoWayProbe.run(words, w0S.toInt, sc, kS.toInt).report)
+    case "role-outputs" :: kyS :: koS :: w0S :: maxS :: rest0 =>
+      // role-outputs <ky> <ko> <W0> <maxLen> [role flags] [beta=..] [every=<n>] (STRATEGY.md §3q): the role machine's outputs against
+      // the oracle only (no strict profile: the old role may be behind on a tick whose answer is "no")
+      val sc = OverlapPal.schedArg(rest0)
+      val ro = RolePal.Options(youngReport = !rest0.contains("noacc"), mergeTmp = rest0.contains("tmp"), fuseIn = rest0.contains("fuse"), compact = rest0.contains("compact"),
+        endAsEntry = rest0.contains("endent"), endOnce = rest0.contains("endonce"), sched = sc, unfold = rest0.contains("unfold"), lgap = rest0.contains("lgap"),
+        merge2 = rest0.contains("merge2"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => rest0.contains(s"no$x")))
+      val w0 = w0S.toInt; val maxLen = maxS.toInt
+      val m = RolePal.machine(kyS.toInt, koS.toInt, w0, ro.copy(merge3 = rest0.contains("merge3"), sharedRK = rest0.contains("rk")))
+      val every = rest0.collectFirst { case x if x.startsWith("every=") => x.drop(6).toInt }
+      // lagwords=<count>[:<seed>]: only the palindromes that stress the old role (OldLag.lagWords), from length 1.4 W0 to maxLen
+      val lagw = rest0.collectFirst { case x if x.startsWith("lagwords=") => x.drop(9).split(":") }
+      val words = lagw match {
+        case Some(a) => OldLag.lagWords(a(0).toInt, (w0 * 7) / 5, maxLen, a.lift(1).map(_.toLong).getOrElse(1L))
+        case None => OverlapProfile.switchWords(maxLen, sc) ++ OverlapProfile.adversarialWords(maxLen, sc).take(150) ++ OverlapProfile.everyLengthWords(every.getOrElse(maxLen)) ++
+          OverlapProfile.randomWords(200, maxLen)
+      }
+      var bad = 0; var badTicks = 0L; val badWords = Vector.newBuilder[String]
+      for (w <- words) {
+        val got = Lps.run(m, w).outputs; val exp = OverlapPal.expectedOutputs(w0, w, sc)
+        val d = got.indices.count(i => got(i) != exp(i))
+        if (d > 0) { bad += 1; badTicks += d; badWords += w; if (bad <= 3) { println(s"mismatch len ${w.length} at ${got.indices.find(i => got(i) != exp(i))}: ${w.take(60)}") } }
+      }
+      rest0.collectFirst { case x if x.startsWith("dump=") => x.drop(5) }.foreach { p => java.nio.file.Files.write(java.nio.file.Paths.get(p), badWords.result().mkString("", "\n", "\n").getBytes("UTF-8")) }
+      println(s"role-outputs ${kyS}/${koS} W0=$w0${sc.label}: ${words.length} words, $bad words wrong ($badTicks ticks)")
+    case "role-word" :: kyS :: koS :: w0S :: word :: rest0 =>
+      // role-word <ky> <ko> <W0> <word> [role flags] [beta=..]: the role machine on one word, the ticks where it differs from the oracle
+      val sc = OverlapPal.schedArg(rest0)
+      val ro = RolePal.Options(youngReport = !rest0.contains("noacc"), mergeTmp = rest0.contains("tmp"), fuseIn = rest0.contains("fuse"), compact = rest0.contains("compact"),
+        endAsEntry = rest0.contains("endent"), endOnce = rest0.contains("endonce"), sched = sc, unfold = rest0.contains("unfold"), lgap = rest0.contains("lgap"),
+        merge2 = rest0.contains("merge2"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => rest0.contains(s"no$x")))
+      val w = if (word.startsWith("rep:")) { val Array(_, a, b, c) = word.split(":"); a + b * c.toInt + a }
+        else if (word.startsWith("file:")) { val Array(_, p, i) = word.split(":"); scala.io.Source.fromFile(p).getLines().toVector(i.toInt) } else { word }
+      val m = RolePal.machine(kyS.toInt, koS.toInt, w0S.toInt, ro.copy(merge3 = rest0.contains("merge3"), sharedRK = rest0.contains("rk")))
+      val got = Lps.run(m, w).outputs; val exp = OverlapPal.expectedOutputs(w0S.toInt, w, sc)
+      println(s"role-word ${kyS}/${koS} len ${w.length} pal=${LpsPal.isPal(w)}: wrong ticks " + got.indices.filter(i => got(i) != exp(i)).map(i => s"${i + 1}(got ${got(i)})").mkString(" "))
+    case "young-climb" :: w0S :: maxS :: itersS :: seedS :: rest0 =>
+      // young-climb <W0> <maxLen> <iterations> <seed> [role flags] [beta=..]: hill climbing on palindromes for the young role's work per
+      // window tick (OldLag.youngNeed with 40 young steps), from the worst of 300 stress palindromes; mutations keep the palindrome
+      val sc = OverlapPal.schedArg(rest0)
+      val ro = RolePal.Options(youngReport = !rest0.contains("noacc"), mergeTmp = rest0.contains("tmp"), compact = rest0.contains("compact"),
+        endAsEntry = rest0.contains("endent"), endOnce = rest0.contains("endonce"), sched = sc, unfold = rest0.contains("unfold"), lgap = rest0.contains("lgap"),
+        merge2 = rest0.contains("merge2"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => rest0.contains(s"no$x")))
+      val w0 = w0S.toInt; val maxLen = maxS.toInt
+      val m = RolePal.machine(40, 4, w0, ro)
+      val rnd = new scala.util.Random(seedS.toLong)
+      def need(w: String): Double = OldLag.youngNeed(m, w, w0, sc)
+      var best = OldLag.lagWords(300, (w0 * 7) / 5, maxLen, seedS.toLong).map(w => (need(w), w)).maxBy(_._1)
+      println(f"start ${best._1}%.2f len ${best._2.length}")
+      def mutate(w: String): String = {
+        val n = w.length; val half = (n + 1) / 2; val u = w.take(half).toCharArray
+        rnd.nextInt(3) match {
+          case 0 => val i = rnd.nextInt(half); u(i) = if (u(i) == 'a') { 'b' } else { 'a' }
+          case 1 => val i = rnd.nextInt(half); val j = rnd.nextInt(half); val c = u(i); u(i) = u(j); u(j) = c
+          case _ => val i = rnd.nextInt(half); val len = 1 + rnd.nextInt(8); val c = if (rnd.nextBoolean()) { 'a' } else { 'b' }; for (k <- i until math.min(half, i + len)) { u(k) = c }
+        }
+        val us = new String(u); val mid = if (n % 2 == 1) { us.take(half - 1) } else { us }
+        us + mid.reverse
+      }
+      for (it <- 1 to itersS.toInt) {
+        val c = mutate(best._2); val x = need(c)
+        if (x >= best._1) { if (x > best._1 + 1e-9) { println(f"iter $it: ${x}%.2f") }; best = (x, c) }
+      }
+      println(f"young-climb W0=$w0${sc.label} maxLen $maxLen: best ${best._1}%.2f len ${best._2.length}: ${best._2}")
+    case "young-need" :: w0S :: maxS :: rest0 =>
+      // young-need <W0> <maxLen> [lagwords=<n>:<seed> | std] [role flags] [beta=..]: the young role's work per window tick (the ky a word
+      // needs at least), measured with 40 young steps; the distribution and the worst words (STRATEGY.md §3q)
+      val sc = OverlapPal.schedArg(rest0)
+      val ro = RolePal.Options(youngReport = !rest0.contains("noacc"), mergeTmp = rest0.contains("tmp"), compact = rest0.contains("compact"),
+        endAsEntry = rest0.contains("endent"), endOnce = rest0.contains("endonce"), sched = sc, unfold = rest0.contains("unfold"), lgap = rest0.contains("lgap"),
+        merge2 = rest0.contains("merge2"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => rest0.contains(s"no$x")))
+      val w0 = w0S.toInt; val maxLen = maxS.toInt
+      val m = RolePal.machine(40, 4, w0, ro.copy(merge3 = rest0.contains("merge3"), sharedRK = rest0.contains("rk")))
+      val lagw = rest0.collectFirst { case x if x.startsWith("lagwords=") => x.drop(9).split(":") }
+      val periodic = rest0.contains("periodic")
+      val words = lagw match {
+        case Some(a) => OldLag.lagWords(a(0).toInt, (w0 * 7) / 5, maxLen, a.lift(1).map(_.toLong).getOrElse(1L))
+        // periodic: (a^i b^j)^r of length maxLen and its complement, i <= 12, j <= 3
+        case None if periodic => for (i <- (1 to 12).toVector; j <- 1 to 3; x <- Seq(("a" * i + "b" * j), ("b" * i + "a" * j))) yield (x * (maxLen / x.length + 1)).take(maxLen)
+        case None => OverlapProfile.switchWords(maxLen, sc) ++ OverlapProfile.adversarialWords(maxLen, sc).take(150) ++ OverlapProfile.everyLengthWords(maxLen)
+      }
+      val needs = words.map(w => (OldLag.youngNeed(m, w, w0, sc), w)).sortBy(-_._1)
+      val v = needs.map(_._1).sorted
+      def at(q: Int): Double = v(math.min(v.length - 1, v.length * q / 100))
+      println(f"young-need W0=$w0${sc.label}: ${words.length} words, work a window tick: p50 ${at(50)}%.2f, p99 ${at(99)}%.2f, max ${v.last}%.2f")
+      needs.take(5).foreach { case (x, w) => println(f"  $x%.2f len ${w.length}: $w") }
+      rest0.collectFirst { case x if x.startsWith("dump=") => x.drop(5) }.foreach { p =>
+        java.nio.file.Files.write(java.nio.file.Paths.get(p), needs.take(20).map { case (x, w) => f"$x%.2f $w" }.mkString("", "\n", "\n").getBytes("UTF-8")) }
+    case "old-lag" :: kyS :: w0S :: maxS :: rest0 =>
+      // old-lag <ky> <W0> <maxLen> [role flags] [beta=..] [k=1,2,3] (STRATEGY.md §3q): the §3f machine's old role with the slack of an
+      // old role that may fall behind (OldLag)
+      val sc = OverlapPal.schedArg(rest0)
+      val ro = RolePal.Options(youngReport = !rest0.contains("noacc"), mergeTmp = rest0.contains("tmp"), compact = rest0.contains("compact"),
+        endAsEntry = rest0.contains("endent"), endOnce = rest0.contains("endonce"), sched = sc, unfold = rest0.contains("unfold"), lgap = rest0.contains("lgap"),
+        merge2 = rest0.contains("merge2"), m2off = Set("U", "G", "R", "R1", "R2").filter(x => rest0.contains(s"no$x")))
+      val ks = rest0.collectFirst { case x if x.startsWith("k=") => x.drop(2).split(",").map(_.toInt).toSeq }.getOrElse(Seq(1, 2, 3, 4))
+      val maxLen = maxS.toInt
+      val words = OverlapProfile.switchWords(maxLen, sc) ++ OverlapProfile.adversarialWords(maxLen, sc).take(150) ++ OverlapProfile.everyLengthWords(maxLen)
+      print(OldLag.run(words, kyS.toInt, 12, w0S.toInt, ro, ks).report)
     case "two-way-machine" :: w0S :: maxS :: kyS :: koS :: rest0 =>
       // two-way-machine <W0> <maxLen> <young steps a tick> <old steps a tick> [beta=..] (STRATEGY.md §3p): the step machine of the
       // table-free matcher (the Lpm core's branches) on the banks of the switch, adversarial and every-length words
       val sc = OverlapPal.schedArg(rest0)
       val maxLen = maxS.toInt
-      val words = OverlapProfile.switchWords(maxLen, sc) ++ OverlapProfile.adversarialWords(maxLen, sc).take(150) ++ OverlapProfile.everyLengthWords(maxLen)
+      val lagw = rest0.collectFirst { case x if x.startsWith("lagwords=") => x.drop(9).split(":") }
+      val words = lagw match {
+        case Some(a) => OldLag.lagWords(a(0).toInt, (w0S.toInt * 7) / 5, maxLen, a.lift(1).map(_.toLong).getOrElse(1L))
+        case None => OverlapProfile.switchWords(maxLen, sc) ++ OverlapProfile.adversarialWords(maxLen, sc).take(150) ++ OverlapProfile.everyLengthWords(maxLen)
+      }
       // kb=<n>: only the first n young slots of a tick may store a cell (the lists and the FIFO reversal)
       val kb = rest0.collectFirst { case x if x.startsWith("kb=") => x.drop(3).toInt }.getOrElse(Int.MaxValue)
       print(TwoWayMachine.probe(words, w0S.toInt, sc, kyS.toInt, koS.toInt, kb))
@@ -692,6 +795,7 @@ object Main {
       val nums = rest0.filter(_.forall(_.isDigit)).map(_.toInt)
       val words = family match {
         case "random" => OverlapProfile.randomWords(nums(0), nums(1))
+        case f if f.startsWith("file:") => scala.io.Source.fromFile(f.drop(5)).getLines().filter(_.nonEmpty).toVector
         case _ => OverlapProfile.everyLengthWords(nums(0))
       }
       val m = RolePal.machine(kyS.toInt, koS.toInt, w0S.toInt, ro)

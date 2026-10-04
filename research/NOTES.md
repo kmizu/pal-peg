@@ -412,3 +412,13 @@ rules (one layer); a young layer about 660 rules, three times §3f's, and there 
 the nodes go: the cost is the reads of N and N' cells (mostly by the passes), each fanned out over the ~27 layers that make them,
 because the lists can only be built in a burst after the pattern's last letter. Letting only kb layers make cells saves at most
 28 % of the list-read arms (kb 16 needs 36 layers, kb 12 needs 44). §3f stays the best.
+
+## 26. The rates were not worst-case (2026-09-29/30, `STRATEGY.md` §3q)
+
+Palindromes built to stress the roles (`OldLag.lagWords`: halves from Fibonacci, Thue–Morse, periodic-with-defects, biased random and
+block words, mirrored) break the §3f machine: 11/4 answers 58 of 3,000 wrong, and the 996-rule grammar rejects b a⁷⁴ b a⁵³ b a⁶ b a⁵³
+b a⁷⁴ b in the Rust runner; the other grammars below 1,000 rules fail on some of the same words. The cause is the young role's rate:
+its work per window tick (`young-need`) reaches 18.5–19.1 on these words against 11.9 on the fixed families. merge3 brings the worst
+case to about 16; the old role needs only 3 steps, since while it is behind the answer is "no" and that is safe unless d ≥ m − j.
+The smallest machine correct on everything tested is 16/3 + merge3: 1,357 rules at ×2.45, 2.66 MB (plain correction 20/4: 1,569,
+3.56 MB). Rates must be chosen against the worst case; the young role's worst-case work (30 % rear-stack reversals) is what to cut.
